@@ -1,0 +1,4 @@
+﻿build/
+data/users.db
+data/users.db.bak
+*.o
