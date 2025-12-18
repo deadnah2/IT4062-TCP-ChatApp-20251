@@ -27,24 +27,25 @@ Ghi chú: Ai làm xong mục nào thì tick `[x]` mục đó.
 
 ## Quickstart (Ubuntu/WSL)
 
-### 1) Cài dependencies
+### 1) Clone (khuyến nghị)
+```bash
+git clone https://github.com/deadnah2/IT4062-TCP-ChatApp-20251.git
+cd IT4062-TCP-ChatApp-20251
+```
+
+### 2) Cài dependencies
 ```bash
 sudo apt update
 sudo apt install -y build-essential python3
 ```
 
-### 2) Build
+### 3) Build
 ```bash
-# Nếu clone repo về máy
-# git clone <repo_url>
-# cd <repo>
-
-cd ChatProject-IT4062
 make clean
 make
 ```
 
-### 3) Run
+### 4) Run
 **Terminal 1 (server):**
 ```bash
 # Usage: ./build/server <port> [session_timeout_seconds]
@@ -59,10 +60,9 @@ make
 ./build/client 127.0.0.1 8888
 ```
 
-### 4) Test tự động (khuyến nghị)
+### 5) Test tự động (khuyến nghị)
 Bộ test tích hợp cover đầy đủ 4 phần base (framing, server IO, accounts, sessions):
 ```bash
-cd ChatProject-IT4062
 make clean && make
 python3 tests/itest.py
 # hoặc
