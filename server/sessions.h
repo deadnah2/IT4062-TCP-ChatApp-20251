@@ -11,20 +11,29 @@
 #define SESS_ERR_EXPIRED -3
 #define SESS_ERR_ALREADY -4
 
+/*
+ * server/sessions.*
+ * - Session lưu in-memory: token -> user_id/socket/last_activity.
+ * - Có timeout để hết hạn session khi không hoạt động.
+ * - Chính sách: 1 user chỉ login 1 nơi (chặn multi-login).
+ */
+
+// Khởi tạo session store; timeout_seconds <=0 sẽ dùng mặc định.
 void sessions_init(int timeout_seconds);
 
-// Create a new session for user_id on socket; returns token in out_token.
+// Tạo session mới cho user_id trên socket; trả token qua out_token.
 int sessions_create(int user_id, int client_socket, char out_token[SESS_TOKEN_LEN + 1]);
 
-// Validate token, update last_activity.
+// Validate token và cập nhật last_activity (để gia hạn timeout).
 int sessions_validate(const char* token, int* out_user_id);
 
+// Logout: xoá session theo token.
 int sessions_destroy(const char* token);
 
-// Remove session bound to this socket (called when client disconnects)
+// Xoá session gắn với socket này (gọi khi client disconnect).
 void sessions_remove_by_socket(int client_socket);
 
-// Check if user already logged in elsewhere
+// Kiểm tra user đã login ở socket khác chưa (chặn multi-login).
 int sessions_is_user_logged_in(int user_id, int exclude_socket);
 
 #endif

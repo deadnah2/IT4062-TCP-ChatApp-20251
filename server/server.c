@@ -12,6 +12,15 @@
 #include "accounts.h"
 #include "sessions.h"
 
+/*
+ * server/server.c
+ * - TCP server dạng thread-per-connection (mỗi client 1 pthread).
+ * - Mỗi thread đọc line bằng framer_recv_line() và dispatch qua handle_request().
+ *
+ * Usage:
+ *   ./build/server <port> [session_timeout_seconds]
+ */
+
 typedef struct {
     int sock;
     struct sockaddr_in addr;
@@ -19,6 +28,12 @@ typedef struct {
 
 static void* client_thread(void* arg)
 {
+    /*
+     * Thread xử lý 1 client:
+     * - Tạo LineFramer riêng để xử lý TCP stream theo \r\n
+     * - Loop đọc từng line và gọi handle_request()
+     * - Khi disconnect: cleanup session theo socket
+     */
     ClientArgs* a = (ClientArgs*)arg;
     int c = a->sock;
 
@@ -47,6 +62,7 @@ static void* client_thread(void* arg)
 
 static int listen_on(unsigned short port)
 {
+    // Tạo socket + bind 0.0.0.0:port + listen backlog.
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) return -1;
 
@@ -83,6 +99,7 @@ int main(int argc, char** argv)
     if (argc >= 2) port = (unsigned short)atoi(argv[1]);
     if (argc >= 3) session_timeout_seconds = atoi(argv[2]);
 
+    // File DB được tạo tự động nếu chưa có.
     if (accounts_init("data/users.db") != 0) {
         printf("Failed to init accounts DB\n");
         return 1;

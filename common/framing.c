@@ -4,6 +4,13 @@
 #include <string.h>
 #include <sys/socket.h>
 
+/*
+ * common/framing.c
+ * - Nhận dữ liệu TCP vào buffer nội bộ và tách theo delimiter "\r\n".
+ * - Cho phép recv() trả về mảnh/ghép (stream) nhưng app vẫn xử lý theo từng dòng.
+ * - Nếu không gặp "\r\n" mà buffer vượt ~64KB => coi là dòng quá dài.
+ */
+
 static int ensure_capacity(LineFramer* framer, size_t need)
 {
     if (need <= framer->cap) return 0;
@@ -19,6 +26,12 @@ static int ensure_capacity(LineFramer* framer, size_t need)
     return 0;
 }
 
+/*
+ * framer_init
+ * - Khởi tạo bộ đệm nội bộ cho LineFramer.
+ * - initial_cap: dung lượng khởi tạo (0 => dùng mặc định 1024).
+ * Return: 0 nếu OK, -1 nếu lỗi cấp phát.
+ */
 int framer_init(LineFramer* framer, size_t initial_cap)
 {
     memset(framer, 0, sizeof(*framer));
@@ -30,6 +43,10 @@ int framer_init(LineFramer* framer, size_t initial_cap)
     return 0;
 }
 
+/*
+ * framer_free
+ * - Giải phóng bộ đệm của framer.
+ */
 void framer_free(LineFramer* framer)
 {
     if (!framer) return;
@@ -50,6 +67,14 @@ static char* find_crlf(LineFramer* framer)
     return NULL;
 }
 
+/*
+ * framer_pop_line
+ * - Tìm "\r\n" trong buffer, nếu có thì copy ra `out` và remove khỏi buffer.
+ * Return:
+ *   1  : đã pop được 1 line
+ *   0  : chưa đủ dữ liệu (chưa thấy "\r\n")
+ *  -2  : out_cap không đủ (line quá dài so với buffer output)
+ */
 int framer_pop_line(LineFramer* framer, char* out, size_t out_cap)
 {
     char* crlf = find_crlf(framer);
@@ -68,6 +93,15 @@ int framer_pop_line(LineFramer* framer, char* out, size_t out_cap)
     return 1;
 }
 
+/*
+ * framer_recv_line
+ * - Đọc từ socket và append vào buffer đến khi pop được 1 line (kết thúc bằng "\r\n").
+ * Return:
+ *  >0  : độ dài line (không gồm "\r\n")
+ *   0  : peer đóng kết nối
+ *  -1  : lỗi recv / lỗi cấp phát
+ *  -2  : line quá dài (~64KB) hoặc out_cap không đủ
+ */
 int framer_recv_line(int sock, LineFramer* framer, char* out, size_t out_cap)
 {
     for (;;) {
@@ -85,6 +119,7 @@ int framer_recv_line(int sock, LineFramer* framer, char* out, size_t out_cap)
         framer->len += (size_t)r;
         framer->data[framer->len] = 0;
 
+        // Guard: tránh trường hợp client gửi 1 line không có delimiter.
         if (framer->len > 64 * 1024) {
             return -2;
         }

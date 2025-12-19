@@ -8,6 +8,14 @@
 
 #include "../common/framing.h"
 
+/*
+ * client/client.c
+ * - Client dòng lệnh để test nhanh server.
+ * - Sau khi LOGIN thành công, client lưu token trong biến `token` để dùng cho WHOAMI/LOGOUT.
+ * - "Raw send" cho phép gõ trực tiếp 1 dòng request theo protocol để debug verb mới.
+ */
+
+// Connect TCP đến server.
 static int connect_to(const char* ip, unsigned short port)
 {
     int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -29,6 +37,7 @@ static int connect_to(const char* ip, unsigned short port)
 
 static void trim_line(char* s)
 {
+    // Loại bỏ \n/\r ở cuối input fgets.
     size_t n = strlen(s);
     while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) {
         s[n - 1] = 0;
@@ -38,12 +47,18 @@ static void trim_line(char* s)
 
 static int send_line(int sock, const char* line)
 {
+    // Gửi 1 dòng theo framing: line + "\r\n".
     if (!line) return -1;
     if (send(sock, line, (int)strlen(line), 0) <= 0) return -1;
     if (send(sock, "\r\n", 2, 0) <= 0) return -1;
     return 0;
 }
 
+/*
+ * kv_get
+ * - Parse payload dạng "k=v k=v ..." và lấy value theo `key`.
+ * - Bản sao của server/handlers.c (đủ dùng cho client demo).
+ */
 static int kv_get(const char* payload, const char* key, char* out, size_t out_cap)
 {
     if (!payload || !key || !out || out_cap == 0) return 0;
@@ -106,6 +121,7 @@ static int parse_response(const char* line,
 
 static void menu(int logged_in)
 {
+    // UI đơn giản để test; chỉ hiện Logout khi đang có token.
     printf("\n=== MENU ===\n");
     printf("1. Register\n");
     printf("2. Login\n");
@@ -136,6 +152,7 @@ int main(int argc, char** argv)
     LineFramer fr;
     framer_init(&fr, 2048);
 
+    // Token session hiện tại (rỗng nếu chưa login).
     char token[128] = {0};
     int next_id = 1;
 
@@ -236,6 +253,8 @@ int main(int argc, char** argv)
                 token[sizeof(token) - 1] = 0;
             }
             if (choice == 4) {
+                // Demo behaviour: raw send dùng để debug nên reset token để tránh nhầm trạng thái.
+                // Nếu muốn giữ phiên sau khi raw send, có thể bỏ đoạn này.
                 token[0] = 0;
             }
         }
@@ -245,4 +264,3 @@ int main(int argc, char** argv)
     close(s);
     return 0;
 }
-

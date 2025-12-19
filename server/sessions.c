@@ -6,6 +6,13 @@
 #include <pthread.h>
 #include <unistd.h>
 
+/*
+ * server/sessions.c
+ * - Session in-memory: tối đa MAX_SESSIONS.
+ * - sessions_validate() sẽ cập nhật last_activity để tính timeout.
+ * - Khi client disconnect, server gọi sessions_remove_by_socket() để cleanup.
+ */
+
 #define MAX_SESSIONS 1000
 
 typedef struct {
@@ -21,6 +28,11 @@ static pthread_mutex_t g_sess_mutex = PTHREAD_MUTEX_INITIALIZER;
 static Session g_sessions[MAX_SESSIONS];
 static int g_timeout = 3600;
 
+/*
+ * seed_once
+ * - Seed RNG đúng 1 lần (phục vụ việc generate token).
+ * - Token hiện tại chỉ dùng cho bài tập/đồ án, không yêu cầu tính bảo mật cao.
+ */
 static void seed_once(void)
 {
     static int seeded = 0;
@@ -43,6 +55,7 @@ static void generate_token(char out[SESS_TOKEN_LEN + 1])
 
 static void cleanup_expired_unlocked(void)
 {
+    // Gọi khi đang giữ mutex: dọn các session đã quá hạn theo last_activity.
     time_t now = time(NULL);
     for (int i = 0; i < MAX_SESSIONS; i++) {
         if (g_sessions[i].active) {
@@ -55,6 +68,7 @@ static void cleanup_expired_unlocked(void)
 
 void sessions_init(int timeout_seconds)
 {
+    // Reset toàn bộ store; timeout_seconds <=0 => dùng mặc định 3600s.
     pthread_mutex_lock(&g_sess_mutex);
     memset(g_sessions, 0, sizeof(g_sessions));
     g_timeout = timeout_seconds > 0 ? timeout_seconds : 3600;
@@ -63,6 +77,7 @@ void sessions_init(int timeout_seconds)
 
 int sessions_is_user_logged_in(int user_id, int exclude_socket)
 {
+    // Trả 1 nếu user_id đã có session active trên socket khác (chặn multi-login).
     pthread_mutex_lock(&g_sess_mutex);
     cleanup_expired_unlocked();
 
@@ -79,6 +94,12 @@ int sessions_is_user_logged_in(int user_id, int exclude_socket)
 
 int sessions_create(int user_id, int client_socket, char out_token[SESS_TOKEN_LEN + 1])
 {
+    /*
+     * Tạo session mới cho (user_id, client_socket).
+     * Chính sách:
+     * - 1 socket chỉ có tối đa 1 token active (nếu có token cũ -> hủy).
+     * - 1 user chỉ login được ở 1 socket tại 1 thời điểm (SESS_ERR_ALREADY).
+     */
     pthread_mutex_lock(&g_sess_mutex);
     cleanup_expired_unlocked();
 
@@ -139,6 +160,7 @@ int sessions_create(int user_id, int client_socket, char out_token[SESS_TOKEN_LE
 
 int sessions_validate(const char* token, int* out_user_id)
 {
+    // Validate token; nếu OK thì "touch" last_activity để gia hạn session.
     if (out_user_id) *out_user_id = 0;
     if (!token || !token[0]) return SESS_ERR_NOT_FOUND;
 
@@ -166,6 +188,7 @@ int sessions_validate(const char* token, int* out_user_id)
 
 int sessions_destroy(const char* token)
 {
+    // Logout: xóa session theo token.
     if (!token || !token[0]) return SESS_ERR_NOT_FOUND;
 
     pthread_mutex_lock(&g_sess_mutex);
@@ -182,6 +205,7 @@ int sessions_destroy(const char* token)
 
 void sessions_remove_by_socket(int client_socket)
 {
+    // Cleanup theo socket (gọi khi client disconnect để tránh session treo).
     pthread_mutex_lock(&g_sess_mutex);
     for (int i = 0; i < MAX_SESSIONS; i++) {
         if (g_sessions[i].active && g_sessions[i].client_socket == client_socket) {

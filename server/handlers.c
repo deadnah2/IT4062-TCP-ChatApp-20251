@@ -7,6 +7,19 @@
 #include "accounts.h"
 #include "sessions.h"
 
+/*
+ * server/handlers.c
+ * - Nhận 1 line request, parse verb/req_id/payload và route sang handler tương ứng.
+ * - Payload hiện dùng dạng "k=v k=v ..." (không hỗ trợ value có dấu cách).
+ * - Các verb cần xác thực nên yêu cầu token=... và gọi sessions_validate().
+ */
+
+/*
+ * kv_get
+ * - Parse payload dạng "k=v k=v ..." và lấy value theo `key`.
+ * - Token được tách bằng dấu cách; không hỗ trợ quoted value.
+ * Return: 1 nếu tìm thấy và copy vào out, 0 nếu không thấy/không hợp lệ.
+ */
 static int kv_get(const char* payload, const char* key, char* out, size_t out_cap)
 {
     if (!payload || !key || !out || out_cap == 0) return 0;
@@ -46,6 +59,16 @@ static void send_simple_err(int sock, const char* rid, int code, const char* msg
     proto_send_err(sock, rid && rid[0] ? rid : "0", code, msg);
 }
 
+/*
+ * handle_request
+ * - Entry point xử lý 1 request của client trong server thread.
+ * - Luôn cố gắng trả response (OK/ERR) theo đúng req_id để client match được.
+ * - Khi thêm verb mới: parse payload bằng kv_get(), kiểm tra auth bằng sessions_validate().
+ *
+ * Return:
+ * - 0  : xử lý xong (kể cả có lỗi nghiệp vụ)
+ * - -1 : lỗi parse request (bad_request)
+ */
 int handle_request(ServerCtx* ctx, const char* line)
 {
     ProtoMsg msg;
@@ -54,6 +77,7 @@ int handle_request(ServerCtx* ctx, const char* line)
         return -1;
     }
 
+    // Lưu ý: handle_request nên luôn trả response theo req_id để client match được.
     // PING
     if (strcmp(msg.verb, "PING") == 0) {
         proto_send_ok(ctx->client_sock, msg.req_id, "pong=1");

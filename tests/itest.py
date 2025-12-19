@@ -10,6 +10,13 @@ from contextlib import closing
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SERVER_BIN = os.path.join(PROJECT_ROOT, "build", "server")
 
+#
+# Integration tests for the base features:
+# - Framing (\r\n stream parsing): split bytes, multiple lines in one send, overlong line.
+# - Server IO: thread-per-connection stability with concurrent clients.
+# - Accounts: register/duplicate/invalid input.
+# - Sessions: login/logout/whoami, prevent multi-login, cleanup on disconnect, timeout.
+#
 
 def die(msg: str) -> None:
     print(f"[FAIL] {msg}")

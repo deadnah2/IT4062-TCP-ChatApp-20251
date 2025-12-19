@@ -3,12 +3,20 @@
 
 #include <stddef.h>
 
+/*
+ * common/framing.*
+ * - TCP là stream nên recv() có thể trả về mảnh/ghép nhiều message.
+ * - Module này gom buffer và tách message theo delimiter "\r\n" (line-based).
+ */
+
 typedef struct {
+    // Buffer nội bộ (dữ liệu TCP đã nhận nhưng chưa pop hết thành line)
     char* data;
     size_t len;
     size_t cap;
 } LineFramer;
 
+// Khởi tạo/giải phóng bộ đệm của framer.
 int framer_init(LineFramer* framer, size_t initial_cap);
 void framer_free(LineFramer* framer);
 

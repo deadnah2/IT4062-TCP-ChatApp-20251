@@ -9,12 +9,21 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/*
+ * server/accounts.c
+ * - DB dạng text file (data/users.db) để đơn giản hoá việc deploy/chạy thử.
+ * - Không lưu plaintext password: lưu (salt, hash) và verify khi LOGIN.
+ * - Dùng mutex để tránh race khi nhiều thread đọc/ghi file cùng lúc.
+ *
+ * Lưu ý: thuật toán hash hiện tại chỉ để phục vụ đồ án môn học, không dùng production.
+ */
+
 static pthread_mutex_t g_accounts_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char g_db_path[512] = {0};
 
 static int ensure_data_dir(const char* path)
 {
-    // Minimal: if path starts with "data/" ensure "data" exists.
+    // Tối giản: nếu path bắt đầu bằng "data/" thì đảm bảo thư mục "data" tồn tại.
     if (strncmp(path, "data/", 5) == 0) {
         mkdir("data", 0755);
     }
@@ -94,7 +103,7 @@ static void random_hex(char* out, size_t out_len)
 
 static void compute_password_hash(const char* salt, const char* password, char out_hash[17])
 {
-    // Not cryptographically strong; sufficient as a simple non-plaintext storage.
+    // Không đủ mạnh về mặt mật mã; chỉ đủ để tránh lưu plaintext.
     char buf[256];
     snprintf(buf, sizeof(buf), "%s:%s", salt, password);
     hex64(fnv1a64(buf), out_hash);
@@ -125,6 +134,7 @@ static int read_next_id_unlocked(FILE* f, int* out_next_id)
 
 int accounts_init(const char* db_path)
 {
+    // Khởi tạo đường dẫn DB và tạo file nếu chưa tồn tại (thread-safe).
     if (!db_path || !db_path[0]) return ACC_ERR_INVALID;
 
     pthread_mutex_lock(&g_accounts_mutex);
@@ -146,6 +156,7 @@ int accounts_init(const char* db_path)
 
 int accounts_username_exists(const char* username)
 {
+    // Helper: scan file DB để kiểm tra trùng username.
     if (!username || !username[0]) return 0;
 
     pthread_mutex_lock(&g_accounts_mutex);
@@ -184,6 +195,14 @@ int accounts_register(const char* username,
                       const char* email,
                       int* out_user_id)
 {
+    /*
+     * Flow:
+     * - Validate input
+     * - Lock mutex
+     * - Check duplicate username
+     * - Compute (salt, hash)
+     * - Append 1 dòng vào DB và trả về user_id mới
+     */
     if (!out_user_id) return ACC_ERR_INVALID;
     *out_user_id = 0;
 
@@ -242,6 +261,14 @@ int accounts_authenticate(const char* username,
                           const char* password,
                           int* out_user_id)
 {
+    /*
+     * Flow:
+     * - Validate
+     * - Lock mutex
+     * - Tìm record theo username
+     * - Verify hash(password, salt) == stored_hash
+     * - Trả user_id nếu hợp lệ
+     */
     if (!out_user_id) return ACC_ERR_INVALID;
     *out_user_id = 0;
 
