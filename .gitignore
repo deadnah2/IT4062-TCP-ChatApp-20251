@@ -1,4 +1,7 @@
 ﻿build/
+data/
 data/users.db
+data/friends.db
+data/friends.db.bak
 data/users.db.bak
 *.o

@@ -119,6 +119,7 @@ static int parse_response(const char* line,
     return 0;
 }
 
+
 static void menu(int logged_in)
 {
     // UI đơn giản để test; chỉ hiện Logout khi đang có token.
@@ -127,7 +128,10 @@ static void menu(int logged_in)
     printf("2. Login\n");
     printf("3. Whoami\n");
     printf("4. Raw send\n");
-    if (logged_in) printf("5. Logout\n");
+    if (logged_in) {
+        printf("5. Logout\n");
+        printf("6. Add friend (send invite)\n");
+    }
     printf("0. Exit\n");
     printf("============\n");
     if (logged_in) printf("(Logged in)\n");
@@ -224,6 +228,27 @@ int main(int argc, char** argv)
                 continue;
             }
             snprintf(req, sizeof(req), "LOGOUT %s token=%s", rid, token);
+            send_line(s, req);
+        } else if (choice == 6) {
+            if (!token[0]) {
+                printf("Not logged in.\n");
+                continue;
+            }
+
+            char to[64];
+            printf("Friend username: ");
+            if (!fgets(to, sizeof(to), stdin)) break;
+            trim_line(to);
+
+            if (!to[0]) {
+                printf("Username cannot be empty\n");
+                continue;
+            }
+
+            snprintf(req, sizeof(req),
+                    "FRIEND_INVITE %s token=%s username=%s",
+                    rid, token, to);
+
             send_line(s, req);
         } else {
             printf("Invalid choice\n");

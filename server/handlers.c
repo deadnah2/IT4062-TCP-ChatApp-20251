@@ -6,6 +6,7 @@
 #include "../common/protocol.h"
 #include "accounts.h"
 #include "sessions.h"
+#include "friends.h"
 
 /*
  * server/handlers.c
@@ -188,6 +189,53 @@ int handle_request(ServerCtx* ctx, const char* line)
         proto_free(&msg);
         return 0;
     }
+
+    // FRIEND_INVITE
+    if (strcmp(msg.verb, "FRIEND_INVITE") == 0) {
+        char token[128], to[64];
+
+        // 1. Parse payload
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "username", to, sizeof(to))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 2. Validate session
+        int from_user_id = 0;
+        int rc = sessions_validate(token, &from_user_id);
+        if (rc != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 3. Send unvitation
+        int fr = friends_send_invite(from_user_id, to);
+
+        if (fr == FRIEND_OK) {
+            char payload[128];
+            snprintf(payload, sizeof(payload), "username=%s status=pending", to);
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (fr == FRIEND_ERR_SELF) {
+            send_simple_err(ctx->client_sock, msg.req_id, 422, "cannot_invite_self");
+        }
+        else if (fr == FRIEND_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "user_not_found");
+        }
+        else if (fr == FRIEND_ERR_EXISTS) {
+            send_simple_err(ctx->client_sock, msg.req_id, 409, "already_friend_or_pending");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
 
     send_simple_err(ctx->client_sock, msg.req_id, 404, "unknown_command");
     proto_free(&msg);

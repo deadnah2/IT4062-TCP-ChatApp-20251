@@ -7,7 +7,7 @@ Dự án này là **khung TCP client/server** cho đồ án chat (IT4062). READM
 - [x] Cài đặt cơ chế vào/ra socket trên server: 2 điểm
 - [x] Đăng ký và quản lý tài khoản: 2 điểm
 - [x] Đăng nhập và quản lý phiên: 2 điểm
-- [ ] Gửi lời mời kết bạn: 1 điểm
+- [x] Gửi lời mời kết bạn: 1 điểm
 - [ ] Chấp nhận/Từ chối lời mời kết bạn: 1 điểm
 - [ ] Hủy kết bạn: 1 điểm
 - [ ] Lấy danh sách bạn bè và trạng thái: 1 điểm
