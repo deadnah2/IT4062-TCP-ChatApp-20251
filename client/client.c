@@ -252,6 +252,10 @@ int main(int argc, char** argv)
                 strncpy(token, t, sizeof(token) - 1);
                 token[sizeof(token) - 1] = 0;
             }
+            if (choice == 5) {
+                // LOGOUT thành công: xoá token local để UI/state phản ánh đúng trạng thái đăng nhập.
+                token[0] = 0;
+            }
             if (choice == 4) {
                 // Demo behaviour: raw send dùng để debug nên reset token để tránh nhầm trạng thái.
                 // Nếu muốn giữ phiên sau khi raw send, có thể bỏ đoạn này.
