@@ -236,6 +236,132 @@ int handle_request(ServerCtx* ctx, const char* line)
         return 0;
     }
 
+    // FRIEND_ACCEPT
+    if (strcmp(msg.verb, "FRIEND_ACCEPT") == 0) {
+        char token[128], from[64];
+
+        // 1. Parse payload
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "username", from, sizeof(from))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 2. Validate session
+        int to_user_id = 0;
+        int rc = sessions_validate(token, &to_user_id);
+        if (rc != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 3. Accept invite
+        int fr = friends_accept_invite(to_user_id, from);
+
+        if (fr == FRIEND_OK) {
+            char payload[128];
+            snprintf(payload, sizeof(payload), "username=%s status=accepted", from);
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (fr == FRIEND_ERR_SELF) {
+            send_simple_err(ctx->client_sock, msg.req_id, 422, "cannot_accept_self");
+        }
+        else if (fr == FRIEND_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "invite_not_found");
+        }
+        else if (fr == FRIEND_ERR_EXISTS) {
+            send_simple_err(ctx->client_sock, msg.req_id, 409, "already_friends");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // FRIEND_REJECT
+    if (strcmp(msg.verb, "FRIEND_REJECT") == 0) {
+        char token[128], from[64];
+
+        // 1. Parse payload
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "username", from, sizeof(from))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 2. Validate session
+        int to_user_id = 0;
+        int rc = sessions_validate(token, &to_user_id);
+        if (rc != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 3. Reject invite
+        int fr = friends_reject_invite(to_user_id, from);
+
+        if (fr == FRIEND_OK) {
+            char payload[128];
+            snprintf(payload, sizeof(payload), "username=%s status=rejected", from);
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (fr == FRIEND_ERR_SELF) {
+            send_simple_err(ctx->client_sock, msg.req_id, 422, "cannot_reject_self");
+        }
+        else if (fr == FRIEND_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "invite_not_found");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
+        // FRIEND_PENDING
+    if (strcmp(msg.verb, "FRIEND_PENDING") == 0) {
+        char token[128];
+
+        // 1. Parse payload
+        if (!kv_get(msg.payload, "token", token, sizeof(token))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 2. Validate session
+        int user_id = 0;
+        int rc = sessions_validate(token, &user_id);
+        if (rc != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 3. Get pending friends
+        char list[512];
+        int fr = friends_pending(user_id, list, sizeof(list));
+        if (fr != FRIEND_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 4. Return OK (even if empty)
+        char payload[600];
+        snprintf(payload, sizeof(payload), "username=%s", list);
+        proto_send_ok(ctx->client_sock, msg.req_id, payload);
+
+        proto_free(&msg);
+        return 0;
+    }
 
     send_simple_err(ctx->client_sock, msg.req_id, 404, "unknown_command");
     proto_free(&msg);

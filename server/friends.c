@@ -136,3 +136,188 @@ int friends_send_invite(int from_user_id, const char *to_username)
 
     return FRIEND_OK;
 }
+
+int friends_accept_invite(int to_user_id, const char *from_username)
+{
+    char to_username[64];
+    if (!from_username || !from_username[0])
+        return FRIEND_ERR_INTERNAL;
+
+    if (!get_username_by_id(to_user_id, to_username, sizeof(to_username)))
+        return FRIEND_ERR_INTERNAL;
+
+    if (strcmp(to_username, from_username) == 0)
+        return FRIEND_ERR_SELF;
+
+    pthread_mutex_lock(&friends_mutex);
+
+    FILE *in = fopen(FRIENDS_DB_PATH, "r");
+    if (!in) {
+        pthread_mutex_unlock(&friends_mutex);
+        return FRIEND_ERR_NOT_FOUND;
+    }
+
+    FILE *out = fopen(FRIENDS_DB_PATH ".tmp", "w");
+    if (!out) {
+        fclose(in);
+        pthread_mutex_unlock(&friends_mutex);
+        return FRIEND_ERR_INTERNAL;
+    }
+
+    char line[LINE_MAX];
+    int found = 0;
+
+    while (fgets(line, sizeof(line), in)) {
+        char from[64], to[64], status[32];
+        long ts;
+
+        if (sscanf(line, "%63[^|]|%63[^|]|%31[^|]|%ld",
+                   from, to, status, &ts) == 4) {
+
+            if (strcmp(from, from_username) == 0 &&
+                strcmp(to, to_username) == 0) {
+
+                if (strcmp(status, "ACCEPTED") == 0) {
+                    fclose(in); fclose(out);
+                    remove(FRIENDS_DB_PATH ".tmp");
+                    pthread_mutex_unlock(&friends_mutex);
+                    return FRIEND_ERR_EXISTS;
+                }
+
+                if (strcmp(status, "PENDING") == 0) {
+                    fprintf(out, "%s|%s|ACCEPTED|%ld\n",
+                            from, to, time(NULL));
+                    found = 1;
+                    continue;
+                }
+            }
+        }
+
+        fputs(line, out);
+    }
+
+    fclose(in);
+    fclose(out);
+
+    if (!found) {
+        remove(FRIENDS_DB_PATH ".tmp");
+        pthread_mutex_unlock(&friends_mutex);
+        return FRIEND_ERR_NOT_FOUND;
+    }
+
+    rename(FRIENDS_DB_PATH ".tmp", FRIENDS_DB_PATH);
+    pthread_mutex_unlock(&friends_mutex);
+    return FRIEND_OK;
+}
+
+int friends_reject_invite(int to_user_id, const char *from_username)
+{
+    char to_username[64];
+    if (!from_username || !from_username[0])
+        return FRIEND_ERR_INTERNAL;
+
+    if (!get_username_by_id(to_user_id, to_username, sizeof(to_username)))
+        return FRIEND_ERR_INTERNAL;
+
+    if (strcmp(to_username, from_username) == 0)
+        return FRIEND_ERR_SELF;
+
+    pthread_mutex_lock(&friends_mutex);
+
+    FILE *in = fopen(FRIENDS_DB_PATH, "r");
+    if (!in) {
+        pthread_mutex_unlock(&friends_mutex);
+        return FRIEND_ERR_NOT_FOUND;
+    }
+
+    FILE *out = fopen(FRIENDS_DB_PATH ".tmp", "w");
+    if (!out) {
+        fclose(in);
+        pthread_mutex_unlock(&friends_mutex);
+        return FRIEND_ERR_INTERNAL;
+    }
+
+    char line[LINE_MAX];
+    int removed = 0;
+
+    while (fgets(line, sizeof(line), in)) {
+        char from[64], to[64], status[32];
+        long ts;
+
+        if (sscanf(line, "%63[^|]|%63[^|]|%31[^|]|%ld",
+                   from, to, status, &ts) == 4) {
+
+            if (strcmp(from, from_username) == 0 &&
+                strcmp(to, to_username) == 0 &&
+                strcmp(status, "PENDING") == 0) {
+                removed = 1;
+                continue;
+            }
+        }
+
+        fputs(line, out);
+    }
+
+    fclose(in);
+    fclose(out);
+
+    if (!removed) {
+        remove(FRIENDS_DB_PATH ".tmp");
+        pthread_mutex_unlock(&friends_mutex);
+        return FRIEND_ERR_NOT_FOUND;
+    }
+
+    rename(FRIENDS_DB_PATH ".tmp", FRIENDS_DB_PATH);
+    pthread_mutex_unlock(&friends_mutex);
+    return FRIEND_OK;
+}
+
+int friends_pending(int user_id, char *out, size_t cap)
+{
+    char my_username[64];
+    out[0] = 0;
+
+    if (!get_username_by_id(user_id, my_username, sizeof(my_username))) {
+        return FRIEND_ERR_INTERNAL;
+    }
+
+    pthread_mutex_lock(&friends_mutex);
+
+    FILE *f = fopen(FRIENDS_DB_PATH, "r");
+    if (!f) {
+        pthread_mutex_unlock(&friends_mutex);
+        return FRIEND_OK; // chưa có file => không có pending
+    }
+
+    char line[LINE_MAX];
+    size_t used = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        char from[64], to[64], status[32];
+        long ts;
+
+        if (sscanf(line, "%63[^|]|%63[^|]|%31[^|]|%ld",
+                   from, to, status, &ts) != 4)
+            continue;
+
+        if (strcmp(to, my_username) == 0 &&
+            strcmp(status, "PENDING") == 0) {
+
+            size_t len = strlen(from);
+            if (used + len + 2 >= cap)
+                break;
+
+            if (used > 0) {
+                out[used++] = ',';
+            }
+
+            memcpy(out + used, from, len);
+            used += len;
+            out[used] = 0;
+        }
+    }
+
+    fclose(f);
+    pthread_mutex_unlock(&friends_mutex);
+    return FRIEND_OK;
+}

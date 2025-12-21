@@ -131,6 +131,7 @@ static void menu(int logged_in)
     if (logged_in) {
         printf("5. Logout\n");
         printf("6. Add friend (send invite)\n");
+        printf("7. View friend invites\n");
     }
     printf("0. Exit\n");
     printf("============\n");
@@ -250,7 +251,103 @@ int main(int argc, char** argv)
                     rid, token, to);
 
             send_line(s, req);
-        } else {
+        } else if (choice == 7) {
+            if (!token[0]) {
+                printf("Not logged in.\n");
+                continue;
+            }
+
+            // 1. Request pending list
+            snprintf(req, sizeof(req),
+                    "FRIEND_PENDING %s token=%s",
+                    rid, token);
+            send_line(s, req);
+
+            char resp[4096];
+            int r = framer_recv_line(s, &fr, resp, sizeof(resp));
+            if (r <= 0) {
+                printf("Disconnected\n");
+                break;
+            }
+
+            char kind[32], rrid[32], rest[4096];
+            parse_response(resp, kind, sizeof(kind), rrid, sizeof(rrid), rest, sizeof(rest));
+
+            printf("< %s\n", resp);
+
+            if (strcmp(kind, "OK") != 0) {
+                continue;
+            }
+
+            char users[2048] = {0};
+            if (!kv_get(rest, "username", users, sizeof(users)) || users[0] == 0) {
+                printf("No pending friend invites.\n");
+                continue;
+            }
+
+            printf("\nPending friend invites:\n");
+
+            // In danh sách
+            char tmp[2048];
+            snprintf(tmp, sizeof(tmp), "%s", users);
+            char* tok = strtok(tmp, ",");
+            while (tok) {
+                printf(" - %s\n", tok);
+                tok = strtok(NULL, ",");
+            }
+
+            // 2. Sub menu
+            for (;;) {
+                printf("\nType username to accept/reject, or 'c' to cancel\n");
+                printf("Format: a <username> | r <username> | c\n> ");
+
+                char line[256];
+                if (!fgets(line, sizeof(line), stdin)) break;
+                trim_line(line);
+                if (strcmp(line, "c") == 0) {
+                    printf("Cancel!\n");
+                    break;
+                }
+
+                char cmd;
+                char uname[64];
+                if (sscanf(line, "%c %63s", &cmd, uname) != 2) {
+                    printf("Invalid input\n");
+                    continue;
+                }
+
+                char rid2[32];
+                snprintf(rid2, sizeof(rid2), "%d", next_id++);
+
+                if (cmd == 'a') {
+                    snprintf(req, sizeof(req),
+                            "FRIEND_ACCEPT %s token=%s username=%s",
+                            rid2, token, uname);
+                } else if (cmd == 'r') {
+                    snprintf(req, sizeof(req),
+                            "FRIEND_REJECT %s token=%s username=%s",
+                            rid2, token, uname);
+                } else {
+                    printf("Unknown command\n");
+                    continue;
+                }
+
+                send_line(s, req);
+
+                r = framer_recv_line(s, &fr, resp, sizeof(resp));
+                if (r <= 0) {
+                    printf("Disconnected\n");
+                    break;
+                }
+
+                parse_response(resp, kind, sizeof(kind), rrid, sizeof(rrid), rest, sizeof(rest));
+                printf("< %s\n", resp);
+                // break;
+            }
+            continue;
+        }
+
+        else {
             printf("Invalid choice\n");
             continue;
         }
