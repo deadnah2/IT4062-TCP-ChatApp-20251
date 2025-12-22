@@ -8,6 +8,26 @@
 
 #include "../common/framing.h"
 
+// ===== ANSI colors =====
+#define C_RESET   "\033[0m"
+#define C_TITLE   "\033[1;36m"   // Cyan bold
+#define C_MENU    "\033[1;33m"   // Yellow
+#define C_OK      "\033[1;32m"   // Green
+#define C_WARN    "\033[1;31m"   // Red
+#define C_INFO    "\033[1;34m"   // Blue
+#define C_DIM     "\033[2m"
+
+// ===== Icons =====
+#define ICON_USER   "👤"
+#define ICON_LOGIN  "🔐"
+#define ICON_LOGOUT "🚪"
+#define ICON_FRIEND "🤝"
+#define ICON_LIST   "📜"
+#define ICON_INVITE "📨"
+#define ICON_EXIT   "❌"
+#define ICON_RAW    "🧪"
+#define ICON_ID     "🆔"
+
 /*
  * client/client.c
  * - Client dòng lệnh để test nhanh server.
@@ -145,24 +165,33 @@ void client_show_friend_list(
 
 static void menu(int logged_in)
 {
-    // UI đơn giản để test; chỉ hiện Logout khi đang có token.
-    printf("\n=== MENU ===\n");
-    printf("1. Register\n");
-    printf("2. Login\n");
-    printf("3. Whoami\n");
-    printf("4. Raw send\n");
+    printf("\n" C_TITLE "══════════════════════════════════\n");
+    printf("        💬 CHAT CLIENT MENU        \n");
+    printf("══════════════════════════════════\n" C_RESET);
+
+    printf(C_MENU " 1. " ICON_USER   " Register\n");
+    printf(" 2. " ICON_LOGIN  " Login\n");
+    printf(" 3. " ICON_ID     " Whoami\n");
+    printf(" 4. " ICON_RAW    " Raw send\n");
+
     if (logged_in)
     {
-        printf("5. Logout\n");
-        printf("6. Add friend (send invite)\n");
-        printf("7. View friend invites\n");
-        printf("8. View friend list\n");
+        printf(" 5. " ICON_LOGOUT " Logout\n");
+        printf(" 6. " ICON_INVITE " Add friend (send invite)\n");
+        printf(" 7. " ICON_LIST   " View friend invites\n");
+        printf(" 8. " ICON_FRIEND " View friend list\n");
     }
-    printf("0. Exit\n");
-    printf("============\n");
+
+    printf(" 0. " ICON_EXIT   " Exit\n");
+    printf(C_TITLE "══════════════════════════════════\n" C_RESET);
+
     if (logged_in)
-        printf("(Logged in)\n");
+        printf(C_OK "✔ Logged in\n" C_RESET);
+    else
+        printf(C_DIM "Not logged in\n" C_RESET);
+
 }
+
 
 int main(int argc, char **argv)
 {
@@ -347,17 +376,25 @@ int main(int argc, char **argv)
                 continue;
             }
 
-            printf("\nPending friend invites:\n");
+            printf("\n" C_TITLE ICON_INVITE " Pending friend invites\n");
+            printf("────────────────────────\n" C_RESET);
 
-            // In danh sách
             char tmp[2048];
             snprintf(tmp, sizeof(tmp), "%s", users);
+
+            int idx = 1;
             char *tok = strtok(tmp, ",");
             while (tok)
             {
-                printf(" - %s\n", tok);
+                printf(C_INFO " %2d. " ICON_USER " %s\n" C_RESET, idx++, tok);
                 tok = strtok(NULL, ",");
             }
+
+            if (idx == 1)
+            {
+                printf(C_DIM " (No pending invites)\n" C_RESET);
+            }
+
 
             // 2. Sub menu
             for (;;)
@@ -524,17 +561,25 @@ void client_show_friend_list( int sock, LineFramer *fr, const char *token, int *
             return;
         }
 
-        printf("\nFriend list:\n");
+        printf("\n" C_TITLE ICON_FRIEND " Friend list\n");
+        printf("────────────────────────\n" C_RESET);
 
         char tmp[2048];
         snprintf(tmp, sizeof(tmp), "%s", users);
 
+        int idx = 1;
         char *tok = strtok(tmp, ",");
         while (tok)
         {
-            printf(" - %s\n", tok);
+            printf(C_OK " %2d. " ICON_USER " %s\n" C_RESET, idx++, tok);
             tok = strtok(NULL, ",");
         }
+
+        if (idx == 1)
+        {
+            printf(C_DIM " (No friends yet)\n" C_RESET);
+        }
+
 
         // 2. Sub menu
         // for (;;)
