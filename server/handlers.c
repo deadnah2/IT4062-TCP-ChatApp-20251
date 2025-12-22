@@ -363,6 +363,87 @@ int handle_request(ServerCtx* ctx, const char* line)
         return 0;
     }
 
+    // FRIEND_LIST
+    if (strcmp(msg.verb, "FRIEND_LIST") == 0) {
+        char token[128];
+
+        // 1. Parse payload
+        if (!kv_get(msg.payload, "token", token, sizeof(token))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 2. Validate session
+        int user_id = 0;
+        int rc = sessions_validate(token, &user_id);
+        if (rc != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 3. Get friends list
+        char list[512];
+        int fr = friends_list(user_id, list, sizeof(list));
+        if (fr != FRIEND_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // 4. Return OK (even if empty)
+        char payload[600];
+        snprintf(payload, sizeof(payload), "username=%s", list);
+        proto_send_ok(ctx->client_sock, msg.req_id, payload);
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // FRIEND_DELETE
+    if (strcmp(msg.verb, "FRIEND_DELETE") == 0) {
+            char token[128], friend[64];
+
+            // 1. Parse payload
+            if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+                !kv_get(msg.payload, "username", friend, sizeof(friend))) {
+                send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+                proto_free(&msg);
+                return 0;
+            }
+
+            // 2. Validate session
+            int user_id = 0;
+            int rc = sessions_validate(token, &user_id);
+            if (rc != SESS_OK) {
+                send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+                proto_free(&msg);
+                return 0;
+            }
+
+            // 3. Delete friend
+            int fr = friends_delete(user_id, friend);
+
+            if (fr == FRIEND_OK) {
+                char payload[128];
+                snprintf(payload, sizeof(payload), "username=%s status=deleted", friend);
+                proto_send_ok(ctx->client_sock, msg.req_id, payload);
+            }
+            else if (fr == FRIEND_ERR_SELF) {
+                send_simple_err(ctx->client_sock, msg.req_id, 422, "cannot_delete_self");
+            }
+            else if (fr == FRIEND_ERR_NOT_FOUND) {
+                send_simple_err(ctx->client_sock, msg.req_id, 404, "friend_not_found");
+            }
+            else {
+                send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+            }
+
+            proto_free(&msg);
+            return 0;
+        }
+
     send_simple_err(ctx->client_sock, msg.req_id, 404, "unknown_command");
     proto_free(&msg);
     return 0;

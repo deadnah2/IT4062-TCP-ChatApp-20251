@@ -15,5 +15,7 @@ int friends_send_invite(int from_user_id, const char *to_username);
 int friends_accept_invite(int to_user_id, const char *from_username);
 int friends_reject_invite(int to_user_id, const char *from_username);
 int friends_pending(int user_id, char *out, size_t cap);
+int friends_list(int user_id, char *out, size_t cap);
+int friends_delete(int user_id, const char *other_username);
 
 #endif
