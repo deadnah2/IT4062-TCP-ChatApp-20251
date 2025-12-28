@@ -1,4 +1,5 @@
 #include "friends.h"
+#include "sessions.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -65,6 +66,33 @@ static int username_exists(const char *username)
 
     fclose(f);
     return 0;
+}
+
+static int get_user_id_by_username(const char *username)
+{
+    FILE *f = fopen(USERS_DB_PATH, "r");
+    if (!f)
+        return -1;
+
+    char line[LINE_MAX];
+    while (fgets(line, sizeof(line), f))
+    {
+        int id, active;
+        char u[64], salt[64], hash[64], email[128];
+
+        if (sscanf(line, "%d|%63[^|]|%63[^|]|%63[^|]|%127[^|]|%d",
+                   &id, u, salt, hash, email, &active) == 6)
+        {
+            if (strcmp(u, username) == 0)
+            {
+                fclose(f);
+                return id;
+            }
+        }
+    }
+
+    fclose(f);
+    return -1;
 }
 
 int friends_send_invite(int from_user_id, const char *to_username)
@@ -382,7 +410,7 @@ int friends_list(int user_id, char *out, size_t cap)
 
     while (fgets(line, sizeof(line), f))
     {
-        char from[64], to[64], status[32], friend[64];
+        char from[64], to[64], status[32], friend_name[64];
         long ts;
 
         if (sscanf(line, "%63[^|]|%63[^|]|%31[^|]|%ld",
@@ -395,13 +423,26 @@ int friends_list(int user_id, char *out, size_t cap)
 
             if (strcmp(to, my_username) == 0)
             {
-                strcpy(friend, from);
+                strcpy(friend_name, from);
             }
             else
             {
-                strcpy(friend, to);
+                strcpy(friend_name, to);
             }
-            size_t len = strlen(friend);
+
+            // Lấy user_id của friend và check online status
+            int friend_id = get_user_id_by_username(friend_name);
+            const char *online_status = "offline";
+            if (friend_id > 0 && sessions_is_online(friend_id))
+            {
+                online_status = "online";
+            }
+
+            // Format: username:online hoặc username:offline
+            char entry[128];
+            snprintf(entry, sizeof(entry), "%s:%s", friend_name, online_status);
+
+            size_t len = strlen(entry);
             if (used + len + 2 >= cap)
                 break;
 
@@ -410,7 +451,7 @@ int friends_list(int user_id, char *out, size_t cap)
                 out[used++] = ',';
             }
 
-            memcpy(out + used, friend, len);
+            memcpy(out + used, entry, len);
             used += len;
             out[used] = 0;
         }

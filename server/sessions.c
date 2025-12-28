@@ -215,3 +215,10 @@ void sessions_remove_by_socket(int client_socket)
     pthread_mutex_unlock(&g_sess_mutex);
 }
 
+int sessions_is_online(int user_id)
+{
+    // Kiểm tra user có session active không (đang online).
+    // Gọi sessions_is_user_logged_in với exclude_socket = -1 để check tất cả socket.
+    return sessions_is_user_logged_in(user_id, -1);
+}
+

@@ -27,6 +27,8 @@
 #define ICON_EXIT   "❌"
 #define ICON_RAW    "🧪"
 #define ICON_ID     "🆔"
+#define ICON_ONLINE "🟢"
+#define ICON_OFFLINE "⚫"
 
 /*
  * client/client.c
@@ -169,9 +171,12 @@ static void menu(int logged_in)
     printf("        💬 CHAT CLIENT MENU        \n");
     printf("══════════════════════════════════\n" C_RESET);
 
-    printf(C_MENU " 1. " ICON_USER   " Register\n");
-    printf(" 2. " ICON_LOGIN  " Login\n");
-    printf(" 3. " ICON_ID     " Whoami\n");
+    if (!logged_in)
+    {
+        printf(C_MENU " 1. " ICON_USER   " Register\n");
+        printf(" 2. " ICON_LOGIN  " Login\n");
+    }
+    printf(C_MENU " 3. " ICON_ID     " Whoami\n");
     printf(" 4. " ICON_RAW    " Raw send\n");
 
     if (logged_in)
@@ -571,7 +576,27 @@ void client_show_friend_list( int sock, LineFramer *fr, const char *token, int *
         char *tok = strtok(tmp, ",");
         while (tok)
         {
-            printf(C_OK " %2d. " ICON_USER " %s\n" C_RESET, idx++, tok);
+            // Parse "username:status" format
+            char *colon = strchr(tok, ':');
+            if (colon)
+            {
+                *colon = '\0';
+                const char *username = tok;
+                const char *status = colon + 1;
+                
+                if (strcmp(status, "online") == 0)
+                {
+                    printf(C_OK " %2d. " ICON_USER " %s  " ICON_ONLINE " online\n" C_RESET, idx++, username);
+                }
+                else
+                {
+                    printf(C_DIM " %2d. " ICON_USER " %s  " ICON_OFFLINE " offline\n" C_RESET, idx++, username);
+                }
+            }
+            else
+            {
+                printf(C_OK " %2d. " ICON_USER " %s\n" C_RESET, idx++, tok);
+            }
             tok = strtok(NULL, ",");
         }
 
