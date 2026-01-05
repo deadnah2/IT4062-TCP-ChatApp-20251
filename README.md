@@ -13,7 +13,7 @@ Dự án này là **khung TCP client/server** cho đồ án chat (IT4062). READM
 - [x] Lấy danh sách bạn bè và trạng thái: 1 điểm
 - [ ] Gửi nhận tin nhắn giữa 2 người dùng: 1 điểm
 - [ ] Ngắt kết nối: 1 điểm
-- [ ] Tạo nhóm chat: 1 điểm
+- [x] Tạo nhóm chat: 1 điểm
 - [ ] Thêm người dùng khác vào nhóm chat: 1 điểm
 - [ ] Xóa người dùng ra khỏi nhóm chat: 1 điểm
 - [ ] Rời nhóm chat: 1 điểm
