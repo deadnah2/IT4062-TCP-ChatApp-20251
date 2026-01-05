@@ -9,24 +9,25 @@
 #include "../common/framing.h"
 
 // ===== ANSI colors =====
-#define C_RESET   "\033[0m"
-#define C_TITLE   "\033[1;36m"   // Cyan bold
-#define C_MENU    "\033[1;33m"   // Yellow
-#define C_OK      "\033[1;32m"   // Green
-#define C_WARN    "\033[1;31m"   // Red
-#define C_INFO    "\033[1;34m"   // Blue
-#define C_DIM     "\033[2m"
+#define C_RESET "\033[0m"
+#define C_TITLE "\033[1;36m" // Cyan bold
+#define C_MENU "\033[1;33m"  // Yellow
+#define C_OK "\033[1;32m"    // Green
+#define C_WARN "\033[1;31m"  // Red
+#define C_INFO "\033[1;34m"  // Blue
+#define C_DIM "\033[2m"
 
 // ===== Icons =====
-#define ICON_USER   "👤"
-#define ICON_LOGIN  "🔐"
+#define ICON_USER "👤"
+#define ICON_LOGIN "🔐"
 #define ICON_LOGOUT "🚪"
 #define ICON_FRIEND "🤝"
-#define ICON_LIST   "📜"
+#define ICON_GROUP "👥"
+#define ICON_LIST "📜"
 #define ICON_INVITE "📨"
-#define ICON_EXIT   "❌"
-#define ICON_RAW    "🧪"
-#define ICON_ID     "🆔"
+#define ICON_EXIT "❌"
+#define ICON_RAW "🧪"
+#define ICON_ID "🆔"
 #define ICON_ONLINE "🟢"
 #define ICON_OFFLINE "⚫"
 
@@ -165,6 +166,8 @@ void client_show_friend_list(
     const char *token,
     int *next_id);
 
+void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_id);
+
 static void menu(int logged_in)
 {
     printf("\n" C_TITLE "══════════════════════════════════\n");
@@ -173,30 +176,29 @@ static void menu(int logged_in)
 
     if (!logged_in)
     {
-        printf(C_MENU " 1. " ICON_USER   " Register\n");
-        printf(" 2. " ICON_LOGIN  " Login\n");
+        printf(C_MENU " 1. " ICON_USER " Register\n");
+        printf(" 2. " ICON_LOGIN " Login\n");
     }
-    printf(C_MENU " 3. " ICON_ID     " Whoami\n");
-    printf(" 4. " ICON_RAW    " Raw send\n");
+    printf(C_MENU " 3. " ICON_ID " Whoami\n");
+    printf(" 4. " ICON_RAW " Raw send\n");
 
     if (logged_in)
     {
         printf(" 5. " ICON_LOGOUT " Logout\n");
         printf(" 6. " ICON_INVITE " Add friend (send invite)\n");
-        printf(" 7. " ICON_LIST   " View friend invites\n");
+        printf(" 7. " ICON_LIST " View friend invites\n");
         printf(" 8. " ICON_FRIEND " View friend list\n");
+        printf(" 9. " ICON_GROUP " Group\n");
     }
 
-    printf(" 0. " ICON_EXIT   " Exit\n");
+    printf(" 0. " ICON_EXIT " Exit\n");
     printf(C_TITLE "══════════════════════════════════\n" C_RESET);
 
     if (logged_in)
         printf(C_OK "✔ Logged in\n" C_RESET);
     else
         printf(C_DIM "Not logged in\n" C_RESET);
-
 }
-
 
 int main(int argc, char **argv)
 {
@@ -400,7 +402,6 @@ int main(int argc, char **argv)
                 printf(C_DIM " (No pending invites)\n" C_RESET);
             }
 
-
             // 2. Sub menu
             for (;;)
             {
@@ -474,6 +475,18 @@ int main(int argc, char **argv)
             continue;
         }
 
+        else if (choice == 9)
+        {
+            if (!token[0])
+            {
+                printf("Not logged in.\n");
+                continue;
+            }
+
+            client_show_groups(s, &fr, token, &next_id);
+            continue;
+        }
+
         else
         {
             printf("Invalid choice\n");
@@ -525,7 +538,8 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void client_show_friend_list( int sock, LineFramer *fr, const char *token, int *next_id){
+void client_show_friend_list(int sock, LineFramer *fr, const char *token, int *next_id)
+{
     for (;;)
     {
         char req[512];
@@ -583,7 +597,7 @@ void client_show_friend_list( int sock, LineFramer *fr, const char *token, int *
                 *colon = '\0';
                 const char *username = tok;
                 const char *status = colon + 1;
-                
+
                 if (strcmp(status, "online") == 0)
                 {
                     printf(C_OK " %2d. " ICON_USER " %s  " ICON_ONLINE " online\n" C_RESET, idx++, username);
@@ -604,7 +618,6 @@ void client_show_friend_list( int sock, LineFramer *fr, const char *token, int *
         {
             printf(C_DIM " (No friends yet)\n" C_RESET);
         }
-
 
         // 2. Sub menu
         // for (;;)
@@ -657,5 +670,141 @@ void client_show_friend_list( int sock, LineFramer *fr, const char *token, int *
         parse_response(resp, kind, sizeof(kind), rrid, sizeof(rrid), rest, sizeof(rest));
         printf("< %s\n", resp);
         // break;
+    }
+}
+
+void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_id)
+{
+    for (;;)
+    {
+        char req[512];
+        char rid[32];
+
+        snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+        snprintf(req, sizeof(req),
+                 "GROUP_LIST %s token=%s",
+                 rid, token);
+
+        send_line(sock, req);
+
+        char resp[4096];
+        int r = framer_recv_line(sock, fr, resp, sizeof(resp));
+        if (r <= 0)
+        {
+            printf("Disconnected\n");
+            return;
+        }
+
+        char kind[32], rrid[32], rest[4096];
+        parse_response(resp, kind, sizeof(kind),
+                       rrid, sizeof(rrid),
+                       rest, sizeof(rest));
+
+        printf("< %s\n", resp);
+
+        if (strcmp(kind, "OK") != 0)
+            return;
+
+        char groups[2048] = {0};
+        kv_get(rest, "groups", groups, sizeof(groups));
+
+        printf("\n" C_TITLE "👥 Your Groups\n");
+        printf("────────────────────────\n" C_RESET);
+
+        if (!groups[0])
+        {
+            printf(C_DIM " (You are not in any group)\n" C_RESET);
+        }
+        else
+        {
+            char tmp[2048];
+            snprintf(tmp, sizeof(tmp), "%s", groups);
+
+            int idx = 1;
+            char *tok = strtok(tmp, ",");
+            while (tok)
+            {
+                printf(C_OK " %2d. 🆔 Group ID: %s\n" C_RESET, idx++, tok);
+                tok = strtok(NULL, ",");
+            }
+        }
+
+        printf("\nCommands:\n");
+        printf(" c <name>        Create group\n");
+        printf(" a <gid> <user>  Add member\n");
+        printf(" m <gid>         View members\n");
+        printf(" q               Back to menu\n");
+        printf("> ");
+
+        char line[256];
+        if (!fgets(line, sizeof(line), stdin))
+            return;
+        trim_line(line);
+
+        if (strcmp(line, "q") == 0)
+            return;
+
+        char cmd;
+        int gid;
+        char arg1[64];
+
+        if (sscanf(line, "%c %d %63s", &cmd, &gid, arg1) == 3 && cmd == 'a')
+        {
+            snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+            snprintf(req, sizeof(req),
+                     "GROUP_ADD %s token=%s group_id=%d username=%s",
+                     rid, token, gid, arg1);
+        }
+        else if (sscanf(line, "%c %63s", &cmd, arg1) == 2 && cmd == 'c')
+        {
+            snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+            snprintf(req, sizeof(req),
+                     "GROUP_CREATE %s token=%s name=%s",
+                     rid, token, arg1);
+        }
+        else if (sscanf(line, "%c %d", &cmd, &gid) == 2 && cmd == 'm')
+        {
+            snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+            snprintf(req, sizeof(req),
+                     "GROUP_MEMBERS %s token=%s group_id=%d",
+                     rid, token, gid);
+        }
+        else
+        {
+            printf("Invalid command\n");
+            continue;
+        }
+
+        send_line(sock, req);
+
+        r = framer_recv_line(sock, fr, resp, sizeof(resp));
+        if (r <= 0)
+        {
+            printf("Disconnected\n");
+            return;
+        }
+
+        parse_response(resp, kind, sizeof(kind),
+                       rrid, sizeof(rrid),
+                       rest, sizeof(rest));
+
+        printf("< %s\n", resp);
+
+        if (strcmp(kind, "OK") == 0 && cmd == 'm')
+        {
+            char users[2048] = {0};
+            kv_get(rest, "users", users, sizeof(users));
+
+            printf("\nMembers:\n");
+            char tmp[2048];
+            snprintf(tmp, sizeof(tmp), "%s", users);
+
+            char *tok = strtok(tmp, ",");
+            while (tok)
+            {
+                printf(" - 👤 %s\n", tok);
+                tok = strtok(NULL, ",");
+            }
+        }
     }
 }

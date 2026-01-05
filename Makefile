@@ -3,7 +3,7 @@ CFLAGS=-Wall -Wextra -O2 -pthread -I.
 BUILD=build
 
 COMMON_SRC=common/framing.c common/protocol.c
-SERVER_SRC=server/server.c server/handlers.c server/accounts.c server/sessions.c server/friends.c
+SERVER_SRC=server/server.c server/handlers.c server/accounts.c server/sessions.c server/friends.c server/groups.c
 CLIENT_SRC=client/client.c
 
 all: $(BUILD) $(BUILD)/server $(BUILD)/client

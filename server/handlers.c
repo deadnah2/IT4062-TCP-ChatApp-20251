@@ -7,6 +7,7 @@
 #include "accounts.h"
 #include "sessions.h"
 #include "friends.h"
+#include "groups.h"
 
 /*
  * server/handlers.c
@@ -443,6 +444,73 @@ int handle_request(ServerCtx* ctx, const char* line)
             proto_free(&msg);
             return 0;
         }
+
+        // GROUP CREATE
+        if (strcmp(msg.verb, "GROUP_CREATE") == 0) {
+            char token[128], name[64];
+
+            if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+                !kv_get(msg.payload, "name", name, sizeof(name))) {
+                send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+                proto_free(&msg);
+                return 0;
+            }
+
+            int user_id;
+            if (sessions_validate(token, &user_id) != SESS_OK) {
+                send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+                proto_free(&msg);
+                return 0;
+            }
+
+            int rc = groups_create(user_id, name);
+            if (rc == GROUP_OK)
+                proto_send_ok(ctx->client_sock, msg.req_id, "status=created");
+            else
+                send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+
+            proto_free(&msg);
+            return 0;
+        }
+
+        // GROUP_LIST
+        if (strcmp(msg.verb, "GROUP_LIST") == 0) {
+            char token[128];
+            char groups[1024];
+            char payload[1100];
+
+            // 1. Parse payload
+            if (!kv_get(msg.payload, "token", token, sizeof(token))) {
+                send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+                proto_free(&msg);
+                return 0;
+            }
+
+            // 2. Validate session
+            int user_id = 0;
+            if (sessions_validate(token, &user_id) != SESS_OK) {
+                send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+                proto_free(&msg);
+                return 0;
+            }
+
+            // 3. Query groups
+            int gr = groups_list(user_id, groups, sizeof(groups));
+            if (gr != GROUP_OK) {
+                send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+                proto_free(&msg);
+                return 0;
+            }
+
+            // 4. Build payload
+            snprintf(payload, sizeof(payload), "groups=%s", groups);
+
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+            proto_free(&msg);
+            return 0;
+        }
+
+
 
     send_simple_err(ctx->client_sock, msg.req_id, 404, "unknown_command");
     proto_free(&msg);
