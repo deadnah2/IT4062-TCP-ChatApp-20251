@@ -793,7 +793,7 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
         if (strcmp(kind, "OK") == 0 && cmd == 'm')
         {
             char users[2048] = {0};
-            kv_get(rest, "users", users, sizeof(users));
+            kv_get(rest, "members", users, sizeof(users));
 
             printf("\nMembers:\n");
             char tmp[2048];

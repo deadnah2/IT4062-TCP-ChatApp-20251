@@ -9,7 +9,9 @@
 #define GROUP_ERR_PERMISSION 3
 #define GROUP_ERR_INTERNAL 4
 
-int groups_create(int owner_user_id, const char *group_name);
+int groups_create(int owner_user_id, const char *group_name, int *out_group_id);
 int groups_list(int user_id, char *out, size_t cap);
+int groups_add_member(int owner_user_id, int group_id, const char *username);
+int groups_list_members(int user_id, int group_id, char *out, size_t cap);
 
 #endif
