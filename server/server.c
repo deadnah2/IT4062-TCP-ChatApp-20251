@@ -49,7 +49,8 @@ static void* client_thread(void* arg)
         int r = framer_recv_line(c, &fr, line, sizeof(line));
         if (r == 0) break;
         if (r < 0) break;
-        handle_request(&ctx, line);
+        // handle_request trả về -1 khi cần đóng connection (DISCONNECT)
+        if (handle_request(&ctx, line) < 0) break;
     }
 
     // Auto-destroy session when socket disconnects

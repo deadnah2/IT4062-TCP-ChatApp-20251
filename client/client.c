@@ -288,6 +288,7 @@ static void menu(int logged_in)
         printf(" 8. " ICON_FRIEND " View friend list\n");
         printf(" 9. " ICON_GROUP " Group\n");
         printf("10. " ICON_CHAT " Chat (Private Message)\n");
+        printf("11. " ICON_EXIT " Disconnect (logout + exit)\n");
     }
 
     printf(" 0. " ICON_EXIT " Exit\n");
@@ -597,6 +598,29 @@ int main(int argc, char **argv)
             // Start chat mode
             client_chat_mode(s, &fr, token, &next_id);
             continue;
+        }
+
+        else if (choice == 11)
+        {
+            // DISCONNECT - hủy session và đóng connection
+            char rid[32];
+            snprintf(rid, sizeof(rid), "%d", next_id++);
+
+            if (token[0]) {
+                snprintf(req, sizeof(req), "DISCONNECT %s token=%s", rid, token);
+            } else {
+                snprintf(req, sizeof(req), "DISCONNECT %s", rid);
+            }
+            send_line(s, req);
+
+            // Đọc response rồi thoát
+            char resp[4096];
+            int r = framer_recv_line(s, &fr, resp, sizeof(resp));
+            if (r > 0) {
+                printf("< %s\n", resp);
+            }
+            printf(C_OK "Disconnected from server.\n" C_RESET);
+            break;  // Thoát vòng lặp main
         }
 
         else

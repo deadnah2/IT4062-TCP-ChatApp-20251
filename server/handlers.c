@@ -79,8 +79,8 @@ static void send_simple_err(int sock, const char *rid, int code, const char *msg
  * - Khi thêm verb mới: parse payload bằng kv_get(), kiểm tra auth bằng sessions_validate().
  *
  * Return:
- * - 0  : xử lý xong (kể cả có lỗi nghiệp vụ)
- * - -1 : lỗi parse request (bad_request)
+ * - 0  : xử lý xong (kể cả có lỗi nghiệp vụ), giữ connection
+ * - -1 : cần đóng connection (bad_request hoặc DISCONNECT)
  */
 int handle_request(ServerCtx *ctx, const char *line)
 {
@@ -1040,6 +1040,23 @@ int handle_request(ServerCtx *ctx, const char *line)
         return 0;
     }
     
+    // DISCONNECT - client chủ động ngắt kết nối / graceful disconnect
+    // Khác với LOGOUT: DISCONNECT hủy session VÀ đóng TCP connection
+    if (strcmp(msg.verb, "DISCONNECT") == 0) {
+        char token[128];
+        kv_get(msg.payload, "token", token, sizeof(token));
+
+        int user_id;
+        if (token[0] && sessions_validate(token, &user_id) == SESS_OK) {
+            sessions_destroy(token);
+            // Optional: log disconnect event
+        }
+
+        proto_send_ok(ctx->client_sock, msg.req_id, "disconnected=1");
+        proto_free(&msg);
+        return -1; // Signal to close connection
+    }
+
     send_simple_err(ctx->client_sock, msg.req_id, 404, "unknown_command");
     proto_free(&msg);
     return 0;
