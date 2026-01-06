@@ -3,11 +3,14 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/socket.h>
+#include <time.h>
 
 #include "../common/protocol.h"
 #include "accounts.h"
 #include "sessions.h"
 #include "friends.h"
+#include "messages.h"
 #include "groups.h"
 
 /*
@@ -722,6 +725,240 @@ int handle_request(ServerCtx *ctx, const char *line)
         return 0;
     }
 
+    // GROUP_CREATE - TODO: Implement groups.c module
+        if (strcmp(msg.verb, "GROUP_CREATE") == 0) {
+            send_simple_err(ctx->client_sock, msg.req_id, 501, "not_implemented");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // GROUP_LIST - TODO: Implement groups.c module
+        if (strcmp(msg.verb, "GROUP_LIST") == 0) {
+            send_simple_err(ctx->client_sock, msg.req_id, 501, "not_implemented");
+            proto_free(&msg);
+            return 0;
+        }
+
+    // ============ Private Messaging ============
+
+    // PM_CHAT_START - Enter chat mode with a user (for real-time push)
+    if (strcmp(msg.verb, "PM_CHAT_START") == 0) {
+        char token[128], with_user[64];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "with", with_user, sizeof(with_user))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // Get my username
+        char my_username[64];
+        if (!accounts_get_username(user_id, my_username, sizeof(my_username))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "internal_error");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // Get partner user_id
+        int partner_id = accounts_get_user_id(with_user);
+        if (partner_id < 0) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "user_not_found");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // Set chat partner for real-time push
+        sessions_set_chat_partner(user_id, partner_id);
+
+        // Mark messages as read
+        pm_mark_read(user_id, with_user);
+
+        // Get recent history
+        char history[8192] = {0};
+        pm_get_history(user_id, with_user, history, sizeof(history), 50);
+
+        char payload[8400];
+        snprintf(payload, sizeof(payload), "with=%s me=%s history=%s", 
+                 with_user, my_username, history[0] ? history : "empty");
+        proto_send_ok(ctx->client_sock, msg.req_id, payload);
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // PM_CHAT_END - Exit chat mode
+    if (strcmp(msg.verb, "PM_CHAT_END") == 0) {
+        char token[128];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // Clear chat partner
+        sessions_set_chat_partner(user_id, 0);
+
+        proto_send_ok(ctx->client_sock, msg.req_id, "status=chat_ended");
+        proto_free(&msg);
+        return 0;
+    }
+
+    // PM_SEND - Send a private message
+    if (strcmp(msg.verb, "PM_SEND") == 0) {
+        char token[128], to_user[64], content[4096];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "to", to_user, sizeof(to_user)) ||
+            !kv_get(msg.payload, "content", content, sizeof(content))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int from_user_id;
+        if (sessions_validate(token, &from_user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // Content is already Base64 encoded from client
+        int msg_id = 0;
+        int rc = pm_send(from_user_id, to_user, content, &msg_id);
+
+        if (rc == PM_OK) {
+            // Send OK to sender
+            char payload[128];
+            snprintf(payload, sizeof(payload), "msg_id=%d to=%s status=sent", msg_id, to_user);
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+
+            // Try to push to recipient if they're in chat mode with sender
+            int to_user_id = accounts_get_user_id(to_user);
+            if (to_user_id > 0 && sessions_is_chatting_with(to_user_id, from_user_id)) {
+                int to_sock = sessions_get_socket(to_user_id);
+                if (to_sock > 0) {
+                    // Get sender username
+                    char from_username[64];
+                    accounts_get_username(from_user_id, from_username, sizeof(from_username));
+
+                    // Push message to recipient
+                    // Format: PUSH PM from=username content=base64 msg_id=N ts=timestamp
+                    char push_msg[4500];
+                    snprintf(push_msg, sizeof(push_msg), 
+                             "PUSH PM from=%s content=%s msg_id=%d ts=%ld\r\n",
+                             from_username, content, msg_id, (long)time(NULL));
+                    send(to_sock, push_msg, strlen(push_msg), 0);
+                }
+            }
+        }
+        else if (rc == PM_ERR_SELF) {
+            send_simple_err(ctx->client_sock, msg.req_id, 422, "cannot_send_to_self");
+        }
+        else if (rc == PM_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "user_not_found");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // PM_HISTORY - Get chat history with a user
+    if (strcmp(msg.verb, "PM_HISTORY") == 0) {
+        char token[128], with_user[64], limit_str[16];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "with", with_user, sizeof(with_user))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int limit = 50;
+        if (kv_get(msg.payload, "limit", limit_str, sizeof(limit_str))) {
+            limit = atoi(limit_str);
+            if (limit <= 0 || limit > 100) limit = 50;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        char history[8192] = {0};
+        int rc = pm_get_history(user_id, with_user, history, sizeof(history), limit);
+
+        if (rc == PM_OK) {
+            char payload[8300];
+            snprintf(payload, sizeof(payload), "with=%s messages=%s", with_user,
+                     history[0] ? history : "empty");
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (rc == PM_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "user_not_found");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // PM_CONVERSATIONS - List all conversations
+    if (strcmp(msg.verb, "PM_CONVERSATIONS") == 0) {
+        char token[128];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        char convos[2048] = {0};
+        int rc = pm_get_conversations(user_id, convos, sizeof(convos));
+
+        if (rc == PM_OK) {
+            char payload[2200];
+            snprintf(payload, sizeof(payload), "conversations=%s", 
+                     convos[0] ? convos : "empty");
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+    
     send_simple_err(ctx->client_sock, msg.req_id, 404, "unknown_command");
     proto_free(&msg);
     return 0;

@@ -11,6 +11,7 @@
  * - Session in-memory: tối đa MAX_SESSIONS.
  * - sessions_validate() sẽ cập nhật last_activity để tính timeout.
  * - Khi client disconnect, server gọi sessions_remove_by_socket() để cleanup.
+ * - Chat partner tracking for real-time PM push.
  */
 
 #define MAX_SESSIONS 1000
@@ -22,6 +23,7 @@ typedef struct {
     int client_socket;
     time_t created_at;
     time_t last_activity;
+    int chat_partner_id;  // User ID of current chat partner (0 if not in chat mode)
 } Session;
 
 static pthread_mutex_t g_sess_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -222,3 +224,60 @@ int sessions_is_online(int user_id)
     return sessions_is_user_logged_in(user_id, -1);
 }
 
+// ============ Chat Mode (Real-time PM) ============
+
+void sessions_set_chat_partner(int user_id, int partner_user_id)
+{
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (g_sessions[i].active && g_sessions[i].user_id == user_id) {
+            g_sessions[i].chat_partner_id = partner_user_id;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+}
+
+int sessions_get_chat_partner(int user_id)
+{
+    int partner = 0;
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (g_sessions[i].active && g_sessions[i].user_id == user_id) {
+            partner = g_sessions[i].chat_partner_id;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+    return partner;
+}
+
+int sessions_get_socket(int user_id)
+{
+    int sock = -1;
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (g_sessions[i].active && g_sessions[i].user_id == user_id) {
+            sock = g_sessions[i].client_socket;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+    return sock;
+}
+
+int sessions_is_chatting_with(int user_id, int partner_user_id)
+{
+    int result = 0;
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (g_sessions[i].active && 
+            g_sessions[i].user_id == user_id &&
+            g_sessions[i].chat_partner_id == partner_user_id) {
+            result = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+    return result;
+}

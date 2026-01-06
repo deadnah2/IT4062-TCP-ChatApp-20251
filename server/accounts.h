@@ -40,4 +40,10 @@ int accounts_authenticate(const char* username,
 // Optional helpers
 int accounts_username_exists(const char* username);
 
+// Get user_id by username. Returns -1 if not found.
+int accounts_get_user_id(const char* username);
+
+// Get username by user_id. Returns 1 if found, 0 if not.
+int accounts_get_username(int user_id, char* out, size_t out_cap);
+
 #endif

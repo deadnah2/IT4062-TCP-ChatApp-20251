@@ -11,14 +11,14 @@ Dự án này là **khung TCP client/server** cho đồ án chat (IT4062). READM
 - [x] Chấp nhận/Từ chối lời mời kết bạn: 1 điểm
 - [x] Hủy kết bạn: 1 điểm
 - [x] Lấy danh sách bạn bè và trạng thái: 1 điểm
-- [ ] Gửi nhận tin nhắn giữa 2 người dùng: 1 điểm
+- [x] Gửi nhận tin nhắn giữa 2 người dùng: 1 điểm
 - [ ] Ngắt kết nối: 1 điểm
 - [x] Tạo nhóm chat: 1 điểm
 - [x] Thêm người dùng khác vào nhóm chat: 1 điểm
 - [ ] Xóa người dùng ra khỏi nhóm chat: 1 điểm
 - [ ] Rời nhóm chat: 1 điểm
 - [ ] Gửi nhận thông điệp trong nhóm chat: 1 điểm
-- [ ] Gửi tin nhắn offline: 1 điểm
+- [x] Gửi tin nhắn offline: 1 điểm
 - [ ] Ghi log hoạt động: 1 điểm
 
 Ghi chú: Ai làm xong mục nào thì tick `[x]` mục đó.
@@ -119,6 +119,24 @@ Tất cả message là **1 dòng** kết thúc bằng `\r\n`.
 - `LOGIN <rid> username=... password=...`
 - `LOGOUT <rid> token=...`
 - `WHOAMI <rid> token=...`
+
+### Friend Commands
+- `FRIEND_INVITE <rid> token=... username=...` -> Gửi lời mời kết bạn
+- `FRIEND_ACCEPT <rid> token=... username=...` -> Chấp nhận lời mời
+- `FRIEND_REJECT <rid> token=... username=...` -> Từ chối lời mời
+- `FRIEND_PENDING <rid> token=...` -> Danh sách lời mời đang chờ
+- `FRIEND_LIST <rid> token=...` -> Danh sách bạn bè + online status
+- `FRIEND_DELETE <rid> token=... username=...` -> Hủy kết bạn
+
+### Private Message Commands (Real-time Chat)
+- `PM_CHAT_START <rid> token=... with=<username>` -> Vào chế độ chat với user (bật real-time push)
+- `PM_CHAT_END <rid> token=...` -> Thoát chế độ chat
+- `PM_SEND <rid> token=... to=<username> content=<base64>` -> Gửi tin nhắn (content phải Base64 encoded)
+- `PM_HISTORY <rid> token=... with=<username> [limit=50]` -> Lấy lịch sử chat
+- `PM_CONVERSATIONS <rid> token=...` -> Danh sách các cuộc trò chuyện
+
+**Server Push** (khi user đang ở chế độ chat):
+- `PUSH PM from=<username> content=<base64> msg_id=<id> ts=<timestamp>` -> Tin nhắn real-time từ server
 
 ### Error codes
 - `400`: thiếu field / sai format

@@ -39,4 +39,19 @@ int sessions_is_user_logged_in(int user_id, int exclude_socket);
 // Kiểm tra user có đang online không (có session active).
 int sessions_is_online(int user_id);
 
+// ============ Chat Mode (Real-time PM) ============
+
+// Set chat partner for a user (0 to clear)
+// When user A is in chat mode with user B, messages from B are pushed immediately
+void sessions_set_chat_partner(int user_id, int partner_user_id);
+
+// Get chat partner of a user (0 if not in chat mode)
+int sessions_get_chat_partner(int user_id);
+
+// Get socket of a user (for pushing messages). Returns -1 if not online.
+int sessions_get_socket(int user_id);
+
+// Check if user is in chat mode with specific partner
+int sessions_is_chatting_with(int user_id, int partner_user_id);
+
 #endif

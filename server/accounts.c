@@ -334,3 +334,78 @@ int accounts_authenticate(const char* username,
     return ACC_OK;
 }
 
+int accounts_get_user_id(const char* username)
+{
+    if (!username || !username[0]) return -1;
+
+    pthread_mutex_lock(&g_accounts_mutex);
+
+    FILE* f = fopen(g_db_path, "r");
+    if (!f) {
+        pthread_mutex_unlock(&g_accounts_mutex);
+        return -1;
+    }
+
+    char line[512];
+    int result = -1;
+
+    while (fgets(line, sizeof(line), f)) {
+        int id = 0;
+        char file_user[ACC_USERNAME_MAX + 8];
+        char salt[64];
+        char hash[32];
+        char email[ACC_EMAIL_MAX + 8];
+        int active = 0;
+
+        if (sscanf(line, "%d|%31[^|]|%63[^|]|%31[^|]|%95[^|]|%d", 
+                   &id, file_user, salt, hash, email, &active) == 6) {
+            if (strcmp(file_user, username) == 0) {
+                result = id;
+                break;
+            }
+        }
+    }
+
+    fclose(f);
+    pthread_mutex_unlock(&g_accounts_mutex);
+    return result;
+}
+
+int accounts_get_username(int user_id, char* out, size_t out_cap)
+{
+    if (!out || out_cap == 0 || user_id <= 0) return 0;
+    out[0] = '\0';
+
+    pthread_mutex_lock(&g_accounts_mutex);
+
+    FILE* f = fopen(g_db_path, "r");
+    if (!f) {
+        pthread_mutex_unlock(&g_accounts_mutex);
+        return 0;
+    }
+
+    char line[512];
+    int found = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        int id = 0;
+        char file_user[ACC_USERNAME_MAX + 8];
+        char salt[64];
+        char hash[32];
+        char email[ACC_EMAIL_MAX + 8];
+        int active = 0;
+
+        if (sscanf(line, "%d|%31[^|]|%63[^|]|%31[^|]|%95[^|]|%d", 
+                   &id, file_user, salt, hash, email, &active) == 6) {
+            if (id == user_id) {
+                snprintf(out, out_cap, "%s", file_user);
+                found = 1;
+                break;
+            }
+        }
+    }
+
+    fclose(f);
+    pthread_mutex_unlock(&g_accounts_mutex);
+    return found;
+}

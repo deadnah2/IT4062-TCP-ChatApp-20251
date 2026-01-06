@@ -5,6 +5,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
+#include <sys/select.h>
+#include <time.h>
 
 #include "../common/framing.h"
 
@@ -16,6 +19,8 @@
 #define C_WARN "\033[1;31m"  // Red
 #define C_INFO "\033[1;34m"  // Blue
 #define C_DIM "\033[2m"
+#define C_MSG_ME "\033[1;32m"    // Green for my messages
+#define C_MSG_OTHER "\033[1;36m" // Cyan for other's messages
 
 // ===== Icons =====
 #define ICON_USER "👤"
@@ -30,6 +35,8 @@
 #define ICON_ID "🆔"
 #define ICON_ONLINE "🟢"
 #define ICON_OFFLINE "⚫"
+#define ICON_CHAT "💬"
+#define ICON_SEND "➤"
 
 /*
  * client/client.c
@@ -70,6 +77,95 @@ static void trim_line(char *s)
         n--;
     }
 }
+
+// ============ Base64 Utilities ============
+
+static const char b64_table[] = 
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static const int b64_decode_table[256] = {
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+    52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+    -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+    15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+    -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+    41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+};
+
+static int base64_encode(const unsigned char* src, size_t src_len, 
+                         char* out, size_t out_cap)
+{
+    size_t out_len = ((src_len + 2) / 3) * 4;
+    if (out_len + 1 > out_cap) return -1;
+    
+    size_t i = 0, j = 0;
+    while (i < src_len) {
+        unsigned int a = i < src_len ? src[i++] : 0;
+        unsigned int b = i < src_len ? src[i++] : 0;
+        unsigned int c = i < src_len ? src[i++] : 0;
+        
+        unsigned int triple = (a << 16) | (b << 8) | c;
+        
+        out[j++] = b64_table[(triple >> 18) & 0x3F];
+        out[j++] = b64_table[(triple >> 12) & 0x3F];
+        out[j++] = b64_table[(triple >> 6) & 0x3F];
+        out[j++] = b64_table[triple & 0x3F];
+    }
+    
+    size_t mod = src_len % 3;
+    if (mod == 1) {
+        out[j - 1] = '=';
+        out[j - 2] = '=';
+    } else if (mod == 2) {
+        out[j - 1] = '=';
+    }
+    
+    out[j] = '\0';
+    return (int)j;
+}
+
+static int base64_decode(const char* src, unsigned char* out, size_t out_cap)
+{
+    size_t src_len = strlen(src);
+    if (src_len % 4 != 0) return -1;
+    
+    size_t out_len = (src_len / 4) * 3;
+    if (src_len > 0 && src[src_len - 1] == '=') out_len--;
+    if (src_len > 1 && src[src_len - 2] == '=') out_len--;
+    
+    if (out_len + 1 > out_cap) return -1;
+    
+    size_t i = 0, j = 0;
+    while (i < src_len) {
+        int a = src[i] == '=' ? 0 : b64_decode_table[(unsigned char)src[i]]; i++;
+        int b = src[i] == '=' ? 0 : b64_decode_table[(unsigned char)src[i]]; i++;
+        int c = src[i] == '=' ? 0 : b64_decode_table[(unsigned char)src[i]]; i++;
+        int d = src[i] == '=' ? 0 : b64_decode_table[(unsigned char)src[i]]; i++;
+        
+        if (a < 0 || b < 0 || c < 0 || d < 0) return -1;
+        
+        unsigned int triple = (a << 18) | (b << 12) | (c << 6) | d;
+        
+        if (j < out_len) out[j++] = (triple >> 16) & 0xFF;
+        if (j < out_len) out[j++] = (triple >> 8) & 0xFF;
+        if (j < out_len) out[j++] = triple & 0xFF;
+    }
+    
+    out[j] = '\0';
+    return (int)out_len;
+}
+
+// ============ End Base64 ============
 
 static int send_line(int sock, const char *line)
 {
@@ -168,6 +264,8 @@ void client_show_friend_list(
 
 void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_id);
 
+void client_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id);
+
 static void menu(int logged_in)
 {
     printf("\n" C_TITLE "══════════════════════════════════\n");
@@ -189,6 +287,7 @@ static void menu(int logged_in)
         printf(" 7. " ICON_LIST " View friend invites\n");
         printf(" 8. " ICON_FRIEND " View friend list\n");
         printf(" 9. " ICON_GROUP " Group\n");
+        printf("10. " ICON_CHAT " Chat (Private Message)\n");
     }
 
     printf(" 0. " ICON_EXIT " Exit\n");
@@ -484,6 +583,19 @@ int main(int argc, char **argv)
             }
 
             client_show_groups(s, &fr, token, &next_id);
+            continue;
+        }
+
+        else if (choice == 10)
+        {
+            if (!token[0])
+            {
+                printf("Not logged in.\n");
+                continue;
+            }
+
+            // Start chat mode
+            client_chat_mode(s, &fr, token, &next_id);
             continue;
         }
 
@@ -808,3 +920,406 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
         }
     }
 }
+
+// ============ Chat Mode Implementation ============
+
+// Global state for chat mode
+static volatile int g_in_chat_mode = 0;
+static volatile int g_chat_sock = -1;
+static char g_chat_partner[64] = {0};
+static char g_my_username[64] = {0};
+static pthread_t g_recv_thread;
+static pthread_mutex_t g_print_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void format_timestamp(long ts, char *out, size_t cap)
+{
+    time_t t = (time_t)ts;
+    struct tm *tm_info = localtime(&t);
+    strftime(out, cap, "%H:%M", tm_info);
+}
+
+static void print_message(const char *from, const char *content_b64, long ts)
+{
+    // Decode Base64 content
+    char content[2048];
+    if (base64_decode(content_b64, (unsigned char *)content, sizeof(content)) < 0) {
+        strcpy(content, "[decode error]");
+    }
+    
+    char time_str[32];
+    format_timestamp(ts, time_str, sizeof(time_str));
+    
+    pthread_mutex_lock(&g_print_mutex);
+    
+    int is_me = (g_my_username[0] && strcmp(from, g_my_username) == 0);
+    
+    if (is_me) {
+        printf(C_MSG_ME "[%s] [You]: %s\n" C_RESET, time_str, content);
+    } else {
+        printf(C_MSG_OTHER "[%s] [%s]: %s\n" C_RESET, time_str, from, content);
+    }
+    fflush(stdout);
+    
+    pthread_mutex_unlock(&g_print_mutex);
+}
+
+// Thread function to receive messages from server
+static void *chat_recv_thread(void *arg)
+{
+    (void)arg;
+    
+    char buf[8192];
+    int buf_len = 0;
+    
+    while (g_in_chat_mode && g_chat_sock >= 0) {
+        // Set socket to non-blocking temporarily for polling
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 200000; // 200ms
+        
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(g_chat_sock, &fds);
+        
+        int ready = select(g_chat_sock + 1, &fds, NULL, NULL, &tv);
+        
+        if (ready <= 0) continue;
+        
+        // Read data
+        char tmp[1024];
+        int n = recv(g_chat_sock, tmp, sizeof(tmp) - 1, 0);
+        
+        if (n <= 0) {
+            if (n == 0) {
+                pthread_mutex_lock(&g_print_mutex);
+                printf(C_WARN "\n[Disconnected from server]\n" C_RESET);
+                fflush(stdout);
+                pthread_mutex_unlock(&g_print_mutex);
+            }
+            g_in_chat_mode = 0;
+            break;
+        }
+        
+        // Add to buffer
+        if (buf_len + n < (int)sizeof(buf) - 1) {
+            memcpy(buf + buf_len, tmp, n);
+            buf_len += n;
+            buf[buf_len] = '\0';
+        }
+        
+        // Process complete lines
+        char *line_start = buf;
+        char *crlf;
+        while ((crlf = strstr(line_start, "\r\n")) != NULL) {
+            *crlf = '\0';
+            
+            // Check if it's a PUSH message
+            if (strncmp(line_start, "PUSH PM ", 8) == 0) {
+                char *payload = line_start + 8;
+                
+                char from[64] = {0}, content[4096] = {0}, ts_str[32] = {0};
+                
+                // Simple parsing
+                kv_get(payload, "from", from, sizeof(from));
+                kv_get(payload, "content", content, sizeof(content));
+                kv_get(payload, "ts", ts_str, sizeof(ts_str));
+                
+                if (from[0] && content[0]) {
+                    long ts = ts_str[0] ? atol(ts_str) : (long)time(NULL);
+                    print_message(from, content, ts);
+                }
+            }
+            
+            line_start = crlf + 2;
+        }
+        
+        // Move remaining data to beginning
+        if (line_start > buf) {
+            int remaining = buf_len - (line_start - buf);
+            if (remaining > 0) {
+                memmove(buf, line_start, remaining);
+            }
+            buf_len = remaining;
+            buf[buf_len] = '\0';
+        }
+    }
+    
+    return NULL;
+}
+
+static void display_chat_history(const char *history, const char *my_username)
+{
+    if (!history || strcmp(history, "empty") == 0 || !history[0]) {
+        printf(C_DIM "  (No messages yet. Start the conversation!)\n" C_RESET);
+        return;
+    }
+    
+    // History format: msg_id:from:content_b64:ts,msg_id:from:content_b64:ts,...
+    // Messages are in reverse order (newest first), so we need to reverse
+    
+    char tmp[8192];
+    snprintf(tmp, sizeof(tmp), "%s", history);
+    
+    typedef struct {
+        char from[64];
+        char content[2048];
+        long ts;
+    } Msg;
+    
+    Msg msgs[100];
+    int count = 0;
+    
+    char *saveptr;
+    char *msg_tok = strtok_r(tmp, ",", &saveptr);
+    while (msg_tok && count < 100) {
+        char from[64], content[2048];
+        long ts;
+        
+        // Parse msg_id:from:content:ts
+        char *p = msg_tok;
+        char *colon1 = strchr(p, ':');
+        if (!colon1) { msg_tok = strtok_r(NULL, ",", &saveptr); continue; }
+        
+        // Skip msg_id
+        p = colon1 + 1;
+        
+        char *colon2 = strchr(p, ':');
+        if (!colon2) { msg_tok = strtok_r(NULL, ",", &saveptr); continue; }
+        
+        size_t from_len = colon2 - p;
+        if (from_len >= sizeof(from)) from_len = sizeof(from) - 1;
+        memcpy(from, p, from_len);
+        from[from_len] = '\0';
+        
+        p = colon2 + 1;
+        
+        // Find last colon for timestamp
+        char *last_colon = strrchr(p, ':');
+        if (!last_colon) { msg_tok = strtok_r(NULL, ",", &saveptr); continue; }
+        
+        ts = atol(last_colon + 1);
+        
+        size_t content_len = last_colon - p;
+        if (content_len >= sizeof(content)) content_len = sizeof(content) - 1;
+        memcpy(content, p, content_len);
+        content[content_len] = '\0';
+        
+        snprintf(msgs[count].from, sizeof(msgs[count].from), "%s", from);
+        snprintf(msgs[count].content, sizeof(msgs[count].content), "%s", content);
+        msgs[count].ts = ts;
+        count++;
+        
+        msg_tok = strtok_r(NULL, ",", &saveptr);
+    }
+    
+    // Display in reverse order (oldest first)
+    for (int i = count - 1; i >= 0; i--) {
+        // Decode and display
+        char decoded[2048];
+        if (base64_decode(msgs[i].content, (unsigned char *)decoded, sizeof(decoded)) < 0) {
+            strcpy(decoded, "[decode error]");
+        }
+        
+        char time_str[32];
+        format_timestamp(msgs[i].ts, time_str, sizeof(time_str));
+        
+        int is_me = (my_username[0] && strcmp(msgs[i].from, my_username) == 0);
+        
+        if (is_me) {
+            printf(C_MSG_ME "[%s] [You]: %s\n" C_RESET, time_str, decoded);
+        } else {
+            printf(C_MSG_OTHER "[%s] [%s]: %s\n" C_RESET, time_str, msgs[i].from, decoded);
+        }
+    }
+}
+
+void client_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id)
+{
+    printf("\n" C_TITLE ICON_CHAT " Private Message\n");
+    printf("══════════════════════════════════\n" C_RESET);
+    
+    // First, show conversations list
+    char rid[32];
+    snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+    
+    char req[4096];
+    snprintf(req, sizeof(req), "PM_CONVERSATIONS %s token=%s", rid, token);
+    send_line(sock, req);
+    
+    char resp[8192];
+    int r = framer_recv_line(sock, fr, resp, sizeof(resp));
+    if (r <= 0) {
+        printf("Disconnected\n");
+        return;
+    }
+    
+    char kind[32], rrid[32], rest[8192];
+    parse_response(resp, kind, sizeof(kind), rrid, sizeof(rrid), rest, sizeof(rest));
+    
+    if (strcmp(kind, "OK") == 0) {
+        char convos[2048];
+        if (kv_get(rest, "conversations", convos, sizeof(convos)) && 
+            strcmp(convos, "empty") != 0 && convos[0]) {
+            
+            printf(C_INFO "\nRecent conversations:\n" C_RESET);
+            
+            char tmp[2048];
+            snprintf(tmp, sizeof(tmp), "%s", convos);
+            
+            char *saveptr;
+            char *tok = strtok_r(tmp, ",", &saveptr);
+            while (tok) {
+                char username[64];
+                int unread = 0;
+                
+                char *colon = strchr(tok, ':');
+                if (colon) {
+                    *colon = '\0';
+                    snprintf(username, sizeof(username), "%s", tok);
+                    unread = atoi(colon + 1);
+                } else {
+                    snprintf(username, sizeof(username), "%s", tok);
+                }
+                
+                if (unread > 0) {
+                    printf("  " ICON_USER " %s " C_WARN "(%d new)\n" C_RESET, username, unread);
+                } else {
+                    printf("  " ICON_USER " %s\n", username);
+                }
+                
+                tok = strtok_r(NULL, ",", &saveptr);
+            }
+        } else {
+            printf(C_DIM "\nNo conversations yet.\n" C_RESET);
+        }
+    }
+    
+    // Ask who to chat with
+    printf("\n" C_MENU "Enter username to chat with (or 'q' to cancel): " C_RESET);
+    fflush(stdout);
+    
+    char partner[64];
+    if (!fgets(partner, sizeof(partner), stdin)) return;
+    trim_line(partner);
+    
+    if (partner[0] == '\0' || strcmp(partner, "q") == 0) {
+        printf("Cancelled.\n");
+        return;
+    }
+    
+    // Start chat session with server
+    snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+    snprintf(req, sizeof(req), "PM_CHAT_START %s token=%s with=%s", rid, token, partner);
+    send_line(sock, req);
+    
+    r = framer_recv_line(sock, fr, resp, sizeof(resp));
+    if (r <= 0) {
+        printf("Disconnected\n");
+        return;
+    }
+    
+    parse_response(resp, kind, sizeof(kind), rrid, sizeof(rrid), rest, sizeof(rest));
+    
+    if (strcmp(kind, "OK") != 0) {
+        printf(C_WARN "Error: %s\n" C_RESET, rest);
+        return;
+    }
+    
+    // Store partner name and my username
+    snprintf(g_chat_partner, sizeof(g_chat_partner), "%s", partner);
+    
+    // Get my username from server response
+    if (!kv_get(rest, "me", g_my_username, sizeof(g_my_username))) {
+        snprintf(g_my_username, sizeof(g_my_username), "You"); // Default
+    }
+    
+    // Display header
+    printf("\n");
+    printf(C_TITLE "════════════════════════════════════════════\n");
+    printf("       " ICON_CHAT " Chat with %s\n", partner);
+    printf("════════════════════════════════════════════\n" C_RESET);
+    printf(C_DIM "Type your message and press Enter to send.\n");
+    printf("Type 'quit' or 'q' to exit chat.\n" C_RESET);
+    printf(C_TITLE "────────────────────────────────────────────\n" C_RESET);
+    
+    // Get and display history
+    char history[8192];
+    if (kv_get(rest, "history", history, sizeof(history))) {
+        display_chat_history(history, g_my_username);
+    }
+    
+    printf(C_TITLE "────────────────────────────────────────────\n" C_RESET);
+    
+    // Set global state and start receive thread
+    g_in_chat_mode = 1;
+    g_chat_sock = sock;
+    
+    if (pthread_create(&g_recv_thread, NULL, chat_recv_thread, NULL) != 0) {
+        printf(C_WARN "Failed to start receive thread\n" C_RESET);
+        g_in_chat_mode = 0;
+        return;
+    }
+    
+    // Main chat loop - read user input and send (fire and forget)
+    while (g_in_chat_mode) {
+        char input[2048];
+        
+        printf(C_OK "> " C_RESET);
+        fflush(stdout);
+        
+        if (!fgets(input, sizeof(input), stdin)) {
+            break;
+        }
+        trim_line(input);
+        
+        if (input[0] == '\0') {
+            continue;
+        }
+        
+        // Check for quit command
+        if (strcmp(input, "quit") == 0 || strcmp(input, "q") == 0 || 
+            strcmp(input, "/quit") == 0 || strcmp(input, "/q") == 0) {
+            break;
+        }
+        
+        // Encode message to Base64
+        char content_b64[4096];
+        if (base64_encode((unsigned char *)input, strlen(input), 
+                          content_b64, sizeof(content_b64)) < 0) {
+            printf(C_WARN "Message too long\n" C_RESET);
+            continue;
+        }
+        
+        // Send message (fire and forget - don't wait for response)
+        // Receive thread will handle any server responses
+        snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+        snprintf(req, sizeof(req), "PM_SEND %s token=%s to=%s content=%s",
+                 rid, token, partner, content_b64);
+        send_line(sock, req);
+        
+        // Display message immediately (optimistic UI)
+        long ts = (long)time(NULL);
+        print_message(g_my_username, content_b64, ts);
+    }
+    
+    // Cleanup
+    g_in_chat_mode = 0;
+    
+    // End chat session with server
+    snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+    snprintf(req, sizeof(req), "PM_CHAT_END %s token=%s", rid, token);
+    send_line(sock, req);
+    
+    // Wait for response
+    r = framer_recv_line(sock, fr, resp, sizeof(resp));
+    
+    // Wait for receive thread to finish
+    pthread_join(g_recv_thread, NULL);
+    
+    g_chat_partner[0] = '\0';
+    g_my_username[0] = '\0';
+    g_chat_sock = -1;
+    
+    printf(C_INFO "\nChat ended. Returning to menu...\n" C_RESET);
+}
+

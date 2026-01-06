@@ -11,6 +11,7 @@
 #include "handlers.h"
 #include "accounts.h"
 #include "sessions.h"
+#include "messages.h"
 
 /*
  * server/server.c
@@ -104,6 +105,9 @@ int main(int argc, char** argv)
         printf("Failed to init accounts DB\n");
         return 1;
     }
+
+    // Initialize PM module
+    pm_init();
 
     sessions_init(session_timeout_seconds);
 
