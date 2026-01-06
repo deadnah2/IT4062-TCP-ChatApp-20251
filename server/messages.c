@@ -1,5 +1,6 @@
 #include "messages.h"
 #include "sessions.h"
+#include "accounts.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,14 +13,13 @@
 
 /*
  * server/messages.c
- * - Private messaging with file-based storage
- * - Each conversation stored in data/pm/{min_id}_{max_id}.txt
- * - Content is Base64 encoded for safe transmission
- * - Thread-safe with mutex protection
+ * - Private messaging với file-based storage.
+ * - Mỗi conversation lưu trong data/pm/{min_id}_{max_id}.txt
+ * - Content được encode Base64 để truyền an toàn qua protocol.
+ * - Thread-safe với mutex protection.
  */
 
 #define PM_DIR "data/pm"
-#define USERS_DB_PATH "data/users.db"
 #define LINE_MAX 4096
 #define MSG_ID_FILE "data/pm/.msg_id"
 
@@ -126,53 +126,6 @@ int base64_decode_str(const char* b64, char* out, size_t out_cap)
 
 // ============ Helper Functions ============
 
-static int get_user_id_by_username(const char* username)
-{
-    FILE* f = fopen(USERS_DB_PATH, "r");
-    if (!f) return -1;
-    
-    char line[512];
-    while (fgets(line, sizeof(line), f)) {
-        int id, active;
-        char u[64], salt[64], hash[64], email[128];
-        
-        if (sscanf(line, "%d|%63[^|]|%63[^|]|%63[^|]|%127[^|]|%d",
-                   &id, u, salt, hash, email, &active) == 6) {
-            if (strcmp(u, username) == 0) {
-                fclose(f);
-                return id;
-            }
-        }
-    }
-    
-    fclose(f);
-    return -1;
-}
-
-static int get_username_by_id(int user_id, char* out, size_t cap)
-{
-    FILE* f = fopen(USERS_DB_PATH, "r");
-    if (!f) return 0;
-    
-    char line[512];
-    while (fgets(line, sizeof(line), f)) {
-        int id, active;
-        char username[64], salt[64], hash[64], email[128];
-        
-        if (sscanf(line, "%d|%63[^|]|%63[^|]|%63[^|]|%127[^|]|%d",
-                   &id, username, salt, hash, email, &active) == 6) {
-            if (id == user_id) {
-                snprintf(out, cap, "%s", username);
-                fclose(f);
-                return 1;
-            }
-        }
-    }
-    
-    fclose(f);
-    return 0;
-}
-
 static void get_pm_filepath(int user1_id, int user2_id, char* out, size_t cap)
 {
     // Always use min_max order for consistent file naming
@@ -227,7 +180,7 @@ int pm_send(int from_user_id, const char* to_username,
     
     // Get sender username
     char from_username[64];
-    if (!get_username_by_id(from_user_id, from_username, sizeof(from_username))) {
+    if (!accounts_get_username(from_user_id, from_username, sizeof(from_username))) {
         return PM_ERR_INTERNAL;
     }
     
@@ -237,7 +190,7 @@ int pm_send(int from_user_id, const char* to_username,
     }
     
     // Get recipient user_id
-    int to_user_id = get_user_id_by_username(to_username);
+    int to_user_id = accounts_get_user_id(to_username);
     if (to_user_id < 0) {
         return PM_ERR_NOT_FOUND;
     }
@@ -280,7 +233,7 @@ int pm_get_history(int user_id, const char* other_username,
     if (!other_username || !out) return PM_ERR_INTERNAL;
     out[0] = '\0';
     
-    int other_id = get_user_id_by_username(other_username);
+    int other_id = accounts_get_user_id(other_username);
     if (other_id < 0) return PM_ERR_NOT_FOUND;
     
     pthread_mutex_lock(&pm_mutex);
@@ -338,7 +291,7 @@ int pm_get_history(int user_id, const char* other_username,
     
     // Get usernames
     char my_username[64], their_username[64];
-    get_username_by_id(user_id, my_username, sizeof(my_username));
+    accounts_get_username(user_id, my_username, sizeof(my_username));
     strcpy(their_username, other_username);
     
     for (int i = start; i >= 0 && count < limit; i--) {
@@ -373,7 +326,7 @@ int pm_get_conversations(int user_id, char* out, size_t out_cap)
     out[0] = '\0';
     
     char my_username[64];
-    if (!get_username_by_id(user_id, my_username, sizeof(my_username))) {
+    if (!accounts_get_username(user_id, my_username, sizeof(my_username))) {
         return PM_ERR_INTERNAL;
     }
     
@@ -398,7 +351,7 @@ int pm_get_conversations(int user_id, char* out, size_t out_cap)
             
             if (other_id > 0) {
                 char other_username[64];
-                if (get_username_by_id(other_id, other_username, sizeof(other_username))) {
+                if (accounts_get_username(other_id, other_username, sizeof(other_username))) {
                     // Count unread messages
                     char filepath[512];
                     snprintf(filepath, sizeof(filepath), "%s/%s", PM_DIR, entry->d_name);
@@ -451,7 +404,7 @@ int pm_mark_read(int user_id, const char* other_username)
 {
     if (!other_username) return PM_ERR_INTERNAL;
     
-    int other_id = get_user_id_by_username(other_username);
+    int other_id = accounts_get_user_id(other_username);
     if (other_id < 0) return PM_ERR_NOT_FOUND;
     
     pthread_mutex_lock(&pm_mutex);

@@ -11,7 +11,7 @@
  * - Session in-memory: tối đa MAX_SESSIONS.
  * - sessions_validate() sẽ cập nhật last_activity để tính timeout.
  * - Khi client disconnect, server gọi sessions_remove_by_socket() để cleanup.
- * - Chat partner tracking for real-time PM push.
+ * - Hỗ trợ chat_partner tracking cho real-time PM push.
  */
 
 #define MAX_SESSIONS 1000
@@ -23,7 +23,7 @@ typedef struct {
     int client_socket;
     time_t created_at;
     time_t last_activity;
-    int chat_partner_id;  // User ID of current chat partner (0 if not in chat mode)
+    int chat_partner_id;  // User ID của partner đang chat (0 nếu không trong chat mode)
 } Session;
 
 static pthread_mutex_t g_sess_mutex = PTHREAD_MUTEX_INITIALIZER;
