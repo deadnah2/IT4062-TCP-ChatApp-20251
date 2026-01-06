@@ -945,14 +945,17 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
 }
 
 // ============ Chat Mode Implementation ============
+// Phần xử lý chế độ chat real-time 1-1
+// - Main thread: đọc input từ user, gửi message
+// - Receive thread: lắng nghe PUSH message từ server
 
-// Global state for chat mode
-static volatile int g_in_chat_mode = 0;
-static volatile int g_chat_sock = -1;
-static char g_chat_partner[64] = {0};
-static char g_my_username[64] = {0};
-static pthread_t g_recv_thread;
-static pthread_mutex_t g_print_mutex = PTHREAD_MUTEX_INITIALIZER;
+// Global state cho chat mode
+static volatile int g_in_chat_mode = 0;   // Flag đang trong chat mode
+static volatile int g_chat_sock = -1;     // Socket dùng chung
+static char g_chat_partner[64] = {0};     // Username người đang chat
+static char g_my_username[64] = {0};      // Username của mình
+static pthread_t g_recv_thread;           // Thread nhận message
+static pthread_mutex_t g_print_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex cho printf
 
 static void format_timestamp(long ts, char *out, size_t cap)
 {
@@ -963,7 +966,7 @@ static void format_timestamp(long ts, char *out, size_t cap)
 
 static void print_message(const char *from, const char *content_b64, long ts)
 {
-    // Decode Base64 content
+    // Decode Base64 content thành plain text
     char content[2048];
     if (base64_decode(content_b64, (unsigned char *)content, sizeof(content)) < 0) {
         strcpy(content, "[decode error]");
@@ -986,7 +989,8 @@ static void print_message(const char *from, const char *content_b64, long ts)
     pthread_mutex_unlock(&g_print_mutex);
 }
 
-// Thread function to receive messages from server
+// Thread function nhận message từ server (chạy song song với main thread)
+// Lắng nghe PUSH PM và hiển thị real-time
 static void *chat_recv_thread(void *arg)
 {
     (void)arg;
@@ -995,7 +999,7 @@ static void *chat_recv_thread(void *arg)
     int buf_len = 0;
     
     while (g_in_chat_mode && g_chat_sock >= 0) {
-        // Set socket to non-blocking temporarily for polling
+        // Dùng select() với timeout 200ms để poll socket
         struct timeval tv;
         tv.tv_sec = 0;
         tv.tv_usec = 200000; // 200ms
@@ -1008,7 +1012,7 @@ static void *chat_recv_thread(void *arg)
         
         if (ready <= 0) continue;
         
-        // Read data
+        // Đọc data từ socket
         char tmp[1024];
         int n = recv(g_chat_sock, tmp, sizeof(tmp) - 1, 0);
         
@@ -1023,26 +1027,26 @@ static void *chat_recv_thread(void *arg)
             break;
         }
         
-        // Add to buffer
+        // Thêm data vào buffer
         if (buf_len + n < (int)sizeof(buf) - 1) {
             memcpy(buf + buf_len, tmp, n);
             buf_len += n;
             buf[buf_len] = '\0';
         }
         
-        // Process complete lines
+        // Xử lý từng line hoàn chỉnh (kết thúc bằng \r\n)
         char *line_start = buf;
         char *crlf;
         while ((crlf = strstr(line_start, "\r\n")) != NULL) {
             *crlf = '\0';
             
-            // Check if it's a PUSH message
+            // Kiểm tra nếu là PUSH message từ server
             if (strncmp(line_start, "PUSH PM ", 8) == 0) {
                 char *payload = line_start + 8;
                 
                 char from[64] = {0}, content[4096] = {0}, ts_str[32] = {0};
                 
-                // Simple parsing
+                // Parse các field từ payload
                 kv_get(payload, "from", from, sizeof(from));
                 kv_get(payload, "content", content, sizeof(content));
                 kv_get(payload, "ts", ts_str, sizeof(ts_str));
@@ -1056,7 +1060,7 @@ static void *chat_recv_thread(void *arg)
             line_start = crlf + 2;
         }
         
-        // Move remaining data to beginning
+        // Di chuyển data chưa xử lý về đầu buffer
         if (line_start > buf) {
             int remaining = buf_len - (line_start - buf);
             if (remaining > 0) {
@@ -1078,7 +1082,7 @@ static void display_chat_history(const char *history, const char *my_username)
     }
     
     // History format: msg_id:from:content_b64:ts,msg_id:from:content_b64:ts,...
-    // Messages are in reverse order (newest first), so we need to reverse
+    // Messages theo thứ tự mới nhất trước, cần reverse để hiển thị
     
     char tmp[8192];
     snprintf(tmp, sizeof(tmp), "%s", history);
@@ -1299,13 +1303,13 @@ void client_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id)
             continue;
         }
         
-        // Check for quit command
+        // Kiểm tra lệnh quit
         if (strcmp(input, "quit") == 0 || strcmp(input, "q") == 0 || 
             strcmp(input, "/quit") == 0 || strcmp(input, "/q") == 0) {
             break;
         }
         
-        // Encode message to Base64
+        // Encode message sang Base64 để gửi qua protocol
         char content_b64[4096];
         if (base64_encode((unsigned char *)input, strlen(input), 
                           content_b64, sizeof(content_b64)) < 0) {
@@ -1313,31 +1317,47 @@ void client_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id)
             continue;
         }
         
-        // Send message (fire and forget - don't wait for response)
-        // Receive thread will handle any server responses
+        // Gửi message (fire and forget - không chờ response)
+        // Tránh race condition với receive thread
         snprintf(rid, sizeof(rid), "%d", (*next_id)++);
         snprintf(req, sizeof(req), "PM_SEND %s token=%s to=%s content=%s",
                  rid, token, partner, content_b64);
         send_line(sock, req);
         
-        // Display message immediately (optimistic UI)
+        // Hiển thị message ngay (optimistic UI)
         long ts = (long)time(NULL);
         print_message(g_my_username, content_b64, ts);
     }
     
-    // Cleanup
+    // Cleanup - báo hiệu receive thread dừng
     g_in_chat_mode = 0;
     
-    // End chat session with server
+    // Gửi PM_CHAT_END (fire and forget - không chờ response)
+    // Nếu chờ sẽ bị deadlock do race condition với receive thread
     snprintf(rid, sizeof(rid), "%d", (*next_id)++);
     snprintf(req, sizeof(req), "PM_CHAT_END %s token=%s", rid, token);
     send_line(sock, req);
     
-    // Wait for response
-    r = framer_recv_line(sock, fr, resp, sizeof(resp));
+    // Đợi receive thread thấy flag và tự thoát
+    // Thread check mỗi 200ms trong select timeout
+    struct timespec ts_sleep = {0, 300000000}; // 300ms
+    nanosleep(&ts_sleep, NULL);
     
-    // Wait for receive thread to finish
+    // Đợi thread kết thúc hoàn toàn
     pthread_join(g_recv_thread, NULL);
+    
+    // Flush data còn sót trong socket (response của PM_CHAT_END)
+    // Dùng non-blocking read để tránh bị treo
+    struct timeval tv_flush;
+    tv_flush.tv_sec = 0;
+    tv_flush.tv_usec = 100000; // 100ms
+    fd_set flush_fds;
+    FD_ZERO(&flush_fds);
+    FD_SET(sock, &flush_fds);
+    if (select(sock + 1, &flush_fds, NULL, NULL, &tv_flush) > 0) {
+        char flush_buf[4096];
+        recv(sock, flush_buf, sizeof(flush_buf), 0);
+    }
     
     g_chat_partner[0] = '\0';
     g_my_username[0] = '\0';

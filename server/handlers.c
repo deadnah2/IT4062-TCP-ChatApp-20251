@@ -810,9 +810,9 @@ int handle_request(ServerCtx *ctx, const char *line)
     }
 
 
-    // ============ Private Messaging ============
+    // ============ Private Messaging (Nhắn tin 1-1) ============
 
-    // PM_CHAT_START - Enter chat mode with a user (for real-time push)
+    // PM_CHAT_START - Vào chat mode với user khác (để nhận real-time push)
     if (strcmp(msg.verb, "PM_CHAT_START") == 0) {
         char token[128], with_user[64];
 
@@ -830,7 +830,7 @@ int handle_request(ServerCtx *ctx, const char *line)
             return 0;
         }
 
-        // Get my username
+        // Lấy username của mình
         char my_username[64];
         if (!accounts_get_username(user_id, my_username, sizeof(my_username))) {
             send_simple_err(ctx->client_sock, msg.req_id, 500, "internal_error");
@@ -838,7 +838,7 @@ int handle_request(ServerCtx *ctx, const char *line)
             return 0;
         }
 
-        // Get partner user_id
+        // Lấy user_id của partner
         int partner_id = accounts_get_user_id(with_user);
         if (partner_id < 0) {
             send_simple_err(ctx->client_sock, msg.req_id, 404, "user_not_found");
@@ -846,13 +846,13 @@ int handle_request(ServerCtx *ctx, const char *line)
             return 0;
         }
 
-        // Set chat partner for real-time push
+        // Set chat_partner để server biết push message tới ai
         sessions_set_chat_partner(user_id, partner_id);
 
-        // Mark messages as read
+        // Đánh dấu messages là đã đọc
         pm_mark_read(user_id, with_user);
 
-        // Get recent history
+        // Lấy history gần đây
         char history[8192] = {0};
         pm_get_history(user_id, with_user, history, sizeof(history), 50);
 
@@ -865,7 +865,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         return 0;
     }
 
-    // PM_CHAT_END - Exit chat mode
+    // PM_CHAT_END - Thoát khỏi chat mode
     if (strcmp(msg.verb, "PM_CHAT_END") == 0) {
         char token[128];
 
@@ -882,7 +882,17 @@ int handle_request(ServerCtx *ctx, const char *line)
             return 0;
         }
 
-        // Clear chat partner
+        // Lấy partner_id trước khi clear để mark_read
+        int partner_id = sessions_get_chat_partner(user_id);
+        if (partner_id > 0) {
+            char partner_username[64];
+            if (accounts_get_username(partner_id, partner_username, sizeof(partner_username))) {
+                // Đánh dấu tất cả tin nhắn đã đọc khi thoát chat
+                pm_mark_read(user_id, partner_username);
+            }
+        }
+
+        // Xóa chat_partner
         sessions_set_chat_partner(user_id, 0);
 
         proto_send_ok(ctx->client_sock, msg.req_id, "status=chat_ended");
@@ -890,7 +900,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         return 0;
     }
 
-    // PM_SEND - Send a private message
+    // PM_SEND - Gửi private message
     if (strcmp(msg.verb, "PM_SEND") == 0) {
         char token[128], to_user[64], content[4096];
 
@@ -909,26 +919,26 @@ int handle_request(ServerCtx *ctx, const char *line)
             return 0;
         }
 
-        // Content is already Base64 encoded from client
+        // Content đã được encode Base64 từ client
         int msg_id = 0;
         int rc = pm_send(from_user_id, to_user, content, &msg_id);
 
         if (rc == PM_OK) {
-            // Send OK to sender
+            // Gửi OK cho sender
             char payload[128];
             snprintf(payload, sizeof(payload), "msg_id=%d to=%s status=sent", msg_id, to_user);
             proto_send_ok(ctx->client_sock, msg.req_id, payload);
 
-            // Try to push to recipient if they're in chat mode with sender
+            // Push message tới recipient nếu họ đang trong chat mode với sender
             int to_user_id = accounts_get_user_id(to_user);
             if (to_user_id > 0 && sessions_is_chatting_with(to_user_id, from_user_id)) {
                 int to_sock = sessions_get_socket(to_user_id);
                 if (to_sock > 0) {
-                    // Get sender username
+                    // Lấy username của sender
                     char from_username[64];
                     accounts_get_username(from_user_id, from_username, sizeof(from_username));
 
-                    // Push message to recipient
+                    // Push message tới recipient
                     // Format: PUSH PM from=username content=base64 msg_id=N ts=timestamp
                     char push_msg[4500];
                     snprintf(push_msg, sizeof(push_msg), 
@@ -952,7 +962,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         return 0;
     }
 
-    // PM_HISTORY - Get chat history with a user
+    // PM_HISTORY - Lấy history chat với user khác
     if (strcmp(msg.verb, "PM_HISTORY") == 0) {
         char token[128], with_user[64], limit_str[16];
 
@@ -996,7 +1006,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         return 0;
     }
 
-    // PM_CONVERSATIONS - List all conversations
+    // PM_CONVERSATIONS - Liệt kê tất cả conversations
     if (strcmp(msg.verb, "PM_CONVERSATIONS") == 0) {
         char token[128];
 
