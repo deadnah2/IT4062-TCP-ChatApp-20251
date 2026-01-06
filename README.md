@@ -12,7 +12,7 @@ Dự án này là **khung TCP client/server** cho đồ án chat (IT4062). READM
 - [x] Hủy kết bạn: 1 điểm
 - [x] Lấy danh sách bạn bè và trạng thái: 1 điểm
 - [x] Gửi nhận tin nhắn giữa 2 người dùng: 1 điểm
-- [ ] Ngắt kết nối: 1 điểm
+- [x] Ngắt kết nối: 1 điểm
 - [x] Tạo nhóm chat: 1 điểm
 - [x] Thêm người dùng khác vào nhóm chat: 1 điểm
 - [x] Xóa người dùng ra khỏi nhóm chat: 1 điểm
@@ -117,8 +117,9 @@ Tất cả message là **1 dòng** kết thúc bằng `\r\n`.
 - `PING <rid>` -> `OK <rid> pong=1`
 - `REGISTER <rid> username=... password=... email=...`
 - `LOGIN <rid> username=... password=...`
-- `LOGOUT <rid> token=...`
+- `LOGOUT <rid> token=...` -> Hủy session, giữ TCP connection
 - `WHOAMI <rid> token=...`
+- `DISCONNECT <rid> [token=...]` -> Hủy session (nếu có) và đóng TCP connection
 
 ### Friend Commands
 - `FRIEND_INVITE <rid> token=... username=...` -> Gửi lời mời kết bạn
