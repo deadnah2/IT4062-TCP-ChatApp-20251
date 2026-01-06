@@ -299,3 +299,123 @@ int groups_add_member(int owner_user_id, int group_id, const char *username)
     pthread_mutex_unlock(&groups_mutex);
     return GROUP_OK;
 }
+
+int groups_remove_member(int owner_user_id,
+                         int group_id,
+                         const char *username)
+{
+    char owner[64];
+
+    if (!get_username_by_id(owner_user_id, owner, sizeof(owner)))
+        return GROUP_ERR_INTERNAL;
+
+    pthread_mutex_lock(&groups_mutex);
+
+    if (!is_group_owner(group_id, owner)) {
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_PERMISSION;
+    }
+
+    if (!is_group_member(group_id, username)) {
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_NOT_FOUND;
+    }
+
+    FILE *in = fopen(GROUP_MEMBERS_DB_PATH, "r");
+    FILE *out = fopen(GROUP_MEMBERS_DB_PATH ".tmp", "w");
+
+    if (!in || !out) {
+        if (in) fclose(in);
+        if (out) fclose(out);
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_INTERNAL;
+    }
+
+    char line[LINE_MAX];
+    int removed = 0;
+
+    while (fgets(line, sizeof(line), in)) {
+        int gid;
+        char u[64];
+
+        if (sscanf(line, "%d|%63s", &gid, u) == 2) {
+            if (gid == group_id && strcmp(u, username) == 0) {
+                removed = 1;
+                continue;
+            }
+        }
+        fputs(line, out);
+    }
+
+    fclose(in);
+    fclose(out);
+
+    if (!removed) {
+        remove(GROUP_MEMBERS_DB_PATH ".tmp");
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_NOT_FOUND;
+    }
+
+    rename(GROUP_MEMBERS_DB_PATH ".tmp", GROUP_MEMBERS_DB_PATH);
+    pthread_mutex_unlock(&groups_mutex);
+    return GROUP_OK;
+}
+
+int groups_leave(int user_id, int group_id)
+{
+    char username[64];
+
+    if (!get_username_by_id(user_id, username, sizeof(username)))
+        return GROUP_ERR_INTERNAL;
+
+    pthread_mutex_lock(&groups_mutex);
+
+    if (is_group_owner(group_id, username)) {
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_SELF; // owner cannot leave
+    }
+
+    if (!is_group_member(group_id, username)) {
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_NOT_FOUND;
+    }
+
+    FILE *in = fopen(GROUP_MEMBERS_DB_PATH, "r");
+    FILE *out = fopen(GROUP_MEMBERS_DB_PATH ".tmp", "w");
+
+    if (!in || !out) {
+        if (in) fclose(in);
+        if (out) fclose(out);
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_INTERNAL;
+    }
+
+    char line[LINE_MAX];
+    int removed = 0;
+
+    while (fgets(line, sizeof(line), in)) {
+        int gid;
+        char u[64];
+
+        if (sscanf(line, "%d|%63s", &gid, u) == 2) {
+            if (gid == group_id && strcmp(u, username) == 0) {
+                removed = 1;
+                continue;
+            }
+        }
+        fputs(line, out);
+    }
+
+    fclose(in);
+    fclose(out);
+
+    if (!removed) {
+        remove(GROUP_MEMBERS_DB_PATH ".tmp");
+        pthread_mutex_unlock(&groups_mutex);
+        return GROUP_ERR_NOT_FOUND;
+    }
+
+    rename(GROUP_MEMBERS_DB_PATH ".tmp", GROUP_MEMBERS_DB_PATH);
+    pthread_mutex_unlock(&groups_mutex);
+    return GROUP_OK;
+}

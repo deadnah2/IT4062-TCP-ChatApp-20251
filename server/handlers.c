@@ -725,19 +725,90 @@ int handle_request(ServerCtx *ctx, const char *line)
         return 0;
     }
 
-    // GROUP_CREATE - TODO: Implement groups.c module
-        if (strcmp(msg.verb, "GROUP_CREATE") == 0) {
-            send_simple_err(ctx->client_sock, msg.req_id, 501, "not_implemented");
+    // GROUP REMOVE MEMBER (OWNER)
+    if (strcmp(msg.verb, "GROUP_REMOVE") == 0) {
+        char token[128], username[64], gid_str[32];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "group_id", gid_str, sizeof(gid_str)) ||
+            !kv_get(msg.payload, "username", username, sizeof(username))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
             proto_free(&msg);
             return 0;
         }
 
-        // GROUP_LIST - TODO: Implement groups.c module
-        if (strcmp(msg.verb, "GROUP_LIST") == 0) {
-            send_simple_err(ctx->client_sock, msg.req_id, 501, "not_implemented");
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
             proto_free(&msg);
             return 0;
         }
+
+        int gid = atoi(gid_str);
+        int rc = groups_remove_member(user_id, gid, username);
+
+        if (rc == GROUP_OK) {
+            char payload[128];
+            snprintf(payload, sizeof(payload),
+                    "group_id=%d username=%s status=removed",
+                    gid, username);
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (rc == GROUP_ERR_PERMISSION) {
+            send_simple_err(ctx->client_sock, msg.req_id, 403, "not_group_owner");
+        }
+        else if (rc == GROUP_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "member_not_found");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // GROUP LEAVE (MEMBER)
+    if (strcmp(msg.verb, "GROUP_LEAVE") == 0) {
+        char token[128], gid_str[32];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "group_id", gid_str, sizeof(gid_str))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int gid = atoi(gid_str);
+        int rc = groups_leave(user_id, gid);
+
+        if (rc == GROUP_OK) {
+            char payload[64];
+            snprintf(payload, sizeof(payload),
+                    "group_id=%d status=left", gid);
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (rc == GROUP_ERR_SELF) {
+            send_simple_err(ctx->client_sock, msg.req_id, 422, "owner_cannot_leave");
+        }
+        else if (rc == GROUP_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "not_group_member");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
 
     // ============ Private Messaging ============
 

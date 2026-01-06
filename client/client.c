@@ -842,11 +842,14 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
         }
 
         printf("\nCommands:\n");
-        printf(" c <name>        Create group\n");
-        printf(" a <gid> <user>  Add member\n");
-        printf(" m <gid>         View members\n");
-        printf(" q               Back to menu\n");
+        printf(" c <name>              Create group\n");
+        printf(" a <gid> <user>        Add member (owner)\n");
+        printf(" r <gid> <user>        Remove member (owner)\n");
+        printf(" m <gid>               View members\n");
+        printf(" l <gid>               Leave group\n");
+        printf(" q                     Back to menu\n");
         printf("> ");
+
 
         char line[256];
         if (!fgets(line, sizeof(line), stdin))
@@ -862,30 +865,50 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
 
         if (sscanf(line, "%c %d %63s", &cmd, &gid, arg1) == 3 && cmd == 'a')
         {
+            // ADD MEMBER
             snprintf(rid, sizeof(rid), "%d", (*next_id)++);
             snprintf(req, sizeof(req),
-                     "GROUP_ADD %s token=%s group_id=%d username=%s",
-                     rid, token, gid, arg1);
+                    "GROUP_ADD %s token=%s group_id=%d username=%s",
+                    rid, token, gid, arg1);
+        }
+        else if (sscanf(line, "%c %d %63s", &cmd, &gid, arg1) == 3 && cmd == 'r')
+        {
+            // REMOVE MEMBER
+            snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+            snprintf(req, sizeof(req),
+                    "GROUP_REMOVE %s token=%s group_id=%d username=%s",
+                    rid, token, gid, arg1);
         }
         else if (sscanf(line, "%c %63s", &cmd, arg1) == 2 && cmd == 'c')
         {
+            // CREATE GROUP
             snprintf(rid, sizeof(rid), "%d", (*next_id)++);
             snprintf(req, sizeof(req),
-                     "GROUP_CREATE %s token=%s name=%s",
-                     rid, token, arg1);
+                    "GROUP_CREATE %s token=%s name=%s",
+                    rid, token, arg1);
         }
         else if (sscanf(line, "%c %d", &cmd, &gid) == 2 && cmd == 'm')
         {
+            // VIEW MEMBERS
             snprintf(rid, sizeof(rid), "%d", (*next_id)++);
             snprintf(req, sizeof(req),
-                     "GROUP_MEMBERS %s token=%s group_id=%d",
-                     rid, token, gid);
+                    "GROUP_MEMBERS %s token=%s group_id=%d",
+                    rid, token, gid);
+        }
+        else if (sscanf(line, "%c %d", &cmd, &gid) == 2 && cmd == 'l')
+        {
+            // LEAVE GROUP
+            snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+            snprintf(req, sizeof(req),
+                    "GROUP_LEAVE %s token=%s group_id=%d",
+                    rid, token, gid);
         }
         else
         {
             printf("Invalid command\n");
             continue;
         }
+
 
         send_line(sock, req);
 
