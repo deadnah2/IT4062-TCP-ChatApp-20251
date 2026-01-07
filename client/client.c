@@ -680,12 +680,12 @@ void client_show_friend_list(int sock, LineFramer *fr, const char *token, int *n
     {
         char req[512];
         char rid[32];
+        // printf("next_id = %d\n", *next_id);
 
         snprintf(rid, sizeof(rid), "%d", (*next_id)++);
         snprintf(req, sizeof(req),
                  "FRIEND_LIST %s token=%s",
                  rid, token);
-
         send_line(sock, req);
 
         char resp[4096];
