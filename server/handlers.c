@@ -970,7 +970,7 @@ int handle_request(ServerCtx *ctx, const char *line)
 
         // Set chat_partner để server biết push message tới ai
         sessions_set_chat_partner(user_id, partner_id);
-
+        log_event("rid=%s action=%s status=0 payload=' %s '", msg.req_id, msg.verb, safe_payload(msg.payload));
         // Thông báo cho partner nếu họ đang chat với mình
         if (sessions_is_chatting_with(partner_id, user_id))
         {
@@ -1051,7 +1051,7 @@ int handle_request(ServerCtx *ctx, const char *line)
 
         // Xóa chat_partner
         sessions_set_chat_partner(user_id, 0);
-
+        log_event("rid=%s action=%s status=0 payload=' %s '", msg.req_id, msg.verb, safe_payload(msg.payload));
         proto_send_ok(ctx->client_sock, msg.req_id, "status=chat_ended");
         proto_free(&msg);
         return 0;
@@ -1082,7 +1082,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         // Content đã được encode Base64 từ client
         int msg_id = 0;
         int rc = pm_send(from_user_id, to_user, content, &msg_id);
-
+        log_event("rid=%s action=%s status=%d payload=' %s '", msg.req_id, msg.verb, rc, safe_payload(msg.payload));
         if (rc == PM_OK)
         {
             // Gửi OK cho sender
@@ -1159,7 +1159,7 @@ int handle_request(ServerCtx *ctx, const char *line)
 
         char history[8192] = {0};
         int rc = pm_get_history(user_id, with_user, history, sizeof(history), limit);
-
+        log_event("rid=%s action=%s status=%d payload=' %s '", msg.req_id, msg.verb, rc, safe_payload(msg.payload));
         if (rc == PM_OK)
         {
             char payload[8300];
@@ -1202,7 +1202,7 @@ int handle_request(ServerCtx *ctx, const char *line)
 
         char convos[2048] = {0};
         int rc = pm_get_conversations(user_id, convos, sizeof(convos));
-
+        log_event("rid=%s action=%s status=%d payload=' %s '", msg.req_id, msg.verb, rc, safe_payload(msg.payload));
         if (rc == PM_OK)
         {
             char payload[2200];
@@ -1232,7 +1232,7 @@ int handle_request(ServerCtx *ctx, const char *line)
             sessions_destroy(token);
             // Optional: log disconnect event
         }
-
+        log_event("rid=%s action=%s status=0 payload=' %s '", msg.req_id, msg.verb, safe_payload(msg.payload));
         proto_send_ok(ctx->client_sock, msg.req_id, "disconnected=1");
         proto_free(&msg);
         return -1; // Signal to close connection
@@ -1300,7 +1300,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         // Lấy history
         char history[8192] = {0};
         gm_get_history(user_id, group_id, history, sizeof(history), 50);
-
+        log_event("rid=%s action=%s status=0 payload=' %s '", msg.req_id, msg.verb, safe_payload(msg.payload));
         char payload[8500];
         snprintf(payload, sizeof(payload), "group_id=%d group_name=%s me=%s history=%s",
                  group_id, group_name[0] ? group_name : "unknown", 
@@ -1329,7 +1329,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         }
 
         int group_id = sessions_get_chat_group(user_id);
-
+        log_event("rid=%s action=%s status=0 payload=' %s '", msg.req_id, msg.verb, safe_payload(msg.payload));
         if (group_id > 0) {
             // Lấy username
             char my_username[64];
@@ -1383,7 +1383,7 @@ int handle_request(ServerCtx *ctx, const char *line)
         // Gửi tin nhắn
         int msg_id = 0;
         int rc = gm_send(user_id, group_id, content, &msg_id);
-
+        log_event("rid=%s action=%s status=%d payload=' %s '", msg.req_id, msg.verb, rc, safe_payload(msg.payload));
         if (rc == GM_OK) {
             // Lấy username để push
             char from_username[64];
@@ -1455,7 +1455,7 @@ int handle_request(ServerCtx *ctx, const char *line)
 
         char history[8192] = {0};
         int rc = gm_get_history(user_id, group_id, history, sizeof(history), limit);
-
+        log_event("rid=%s action=%s status=%d payload=' %s '", msg.req_id, msg.verb, rc, safe_payload(msg.payload));
         if (rc == GM_OK) {
             char payload[8400];
             snprintf(payload, sizeof(payload), "group_id=%d history=%s",

@@ -15,7 +15,6 @@
  * - Không lưu plaintext password: lưu (salt, hash) và verify khi LOGIN.
  * - Dùng mutex để tránh race khi nhiều thread đọc/ghi file cùng lúc.
  *
- * Lưu ý: thuật toán hash hiện tại chỉ để phục vụ đồ án môn học, không dùng production.
  */
 
 static pthread_mutex_t g_accounts_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -23,7 +22,7 @@ static char g_db_path[512] = {0};
 
 static int ensure_data_dir(const char* path)
 {
-    // Tối giản: nếu path bắt đầu bằng "data/" thì đảm bảo thư mục "data" tồn tại.
+    // nếu path bắt đầu bằng "data/" thì đảm bảo thư mục "data" tồn tại.
     if (strncmp(path, "data/", 5) == 0) {
         mkdir("data", 0755);
     }

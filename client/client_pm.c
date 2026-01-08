@@ -102,7 +102,7 @@ static void *chat_recv_thread(void *arg)
         // Thiết lập select() với timeout 200ms
         struct timeval tv;
         tv.tv_sec = 0;
-        tv.tv_usec = 200000;  // 200ms để phản hồi nhanh
+        tv.tv_usec = 200000;  // 200ms để phản hồi
 
         fd_set fds;
         FD_ZERO(&fds);

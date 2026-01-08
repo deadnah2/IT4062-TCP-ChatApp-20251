@@ -14,7 +14,7 @@
 
 /*
  * send_all
- * - send(2) có thể gửi được "một phần" buffer (short write).
+ * - send() có thể gửi được "một phần" buffer (short write).
  * - Hàm này lặp đến khi gửi hết `len` bytes hoặc gặp lỗi/đóng kết nối.
  * Return: 0 nếu OK, -1 nếu lỗi.
  */
