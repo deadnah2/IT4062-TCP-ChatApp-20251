@@ -660,7 +660,7 @@ int main(int argc, char **argv)
             {
                 // Demo behaviour: raw send dùng để debug nên reset token để tránh nhầm trạng thái.
                 // Nếu muốn giữ phiên sau khi raw send, có thể bỏ đoạn này.
-                token[0] = 0;
+                // token[0] = 0;
             }
         }
     }
