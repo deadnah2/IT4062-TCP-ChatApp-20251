@@ -1,27 +1,28 @@
 ﻿# ChatProject-IT4062
 
-Dự án này là **khung TCP client/server** cho đồ án chat (IT4062). README này mô tả kiến trúc, protocol và checklist rubric để cả nhóm theo dõi tiến độ và phát triển tính năng tiếp theo.
+Ứng dụng **TCP Chat Client/Server** hoàn chỉnh cho đồ án môn học IT4062. Project hỗ trợ đăng ký/đăng nhập, kết bạn, chat 1-1 (PM) và chat nhóm (GM) với real-time push notification.
 
-## Checklist (Rubric)
-- [x] Xử lý truyền dòng: 1 điểm
-- [x] Cài đặt cơ chế vào/ra socket trên server: 2 điểm
-- [x] Đăng ký và quản lý tài khoản: 2 điểm
-- [x] Đăng nhập và quản lý phiên: 2 điểm
-- [x] Gửi lời mời kết bạn: 1 điểm
-- [x] Chấp nhận/Từ chối lời mời kết bạn: 1 điểm
-- [x] Hủy kết bạn: 1 điểm
-- [x] Lấy danh sách bạn bè và trạng thái: 1 điểm
-- [x] Gửi nhận tin nhắn giữa 2 người dùng: 1 điểm
-- [x] Ngắt kết nối: 1 điểm
-- [x] Tạo nhóm chat: 1 điểm
-- [x] Thêm người dùng khác vào nhóm chat: 1 điểm
-- [x] Xóa người dùng ra khỏi nhóm chat: 1 điểm
-- [x] Rời nhóm chat: 1 điểm
-- [x] Gửi nhận thông điệp trong nhóm chat: 1 điểm
-- [x] Gửi tin nhắn offline: 1 điểm
-- [x] Ghi log hoạt động: 1 điểm
+## Checklist (Rubric) — ✅ Hoàn thành 17/17 (20 điểm)
 
-Ghi chú: Ai làm xong mục nào thì tick `[x]` mục đó.
+| # | Tính năng | Điểm | Module |
+|---|-----------|------|--------|
+| 1 | Xử lý truyền dòng (framing) | 1 | `common/framing.*` |
+| 2 | Cài đặt cơ chế vào/ra socket trên server | 2 | `server/server.c`, `common/protocol.*` |
+| 3 | Đăng ký và quản lý tài khoản | 2 | `server/accounts.*` |
+| 4 | Đăng nhập và quản lý phiên | 2 | `server/sessions.*` |
+| 5 | Gửi lời mời kết bạn | 1 | `server/friends.*` |
+| 6 | Chấp nhận/Từ chối lời mời kết bạn | 1 | `server/friends.*` |
+| 7 | Hủy kết bạn | 1 | `server/friends.*` |
+| 8 | Lấy danh sách bạn bè và trạng thái | 1 | `server/friends.*` |
+| 9 | Gửi nhận tin nhắn giữa 2 người dùng | 1 | `server/messages.*` |
+| 10 | Ngắt kết nối | 1 | `server/handlers.c` |
+| 11 | Tạo nhóm chat | 1 | `server/groups.*` |
+| 12 | Thêm người dùng khác vào nhóm chat | 1 | `server/groups.*` |
+| 13 | Xóa người dùng ra khỏi nhóm chat | 1 | `server/groups.*` |
+| 14 | Rời nhóm chat | 1 | `server/groups.*` |
+| 15 | Gửi nhận thông điệp trong nhóm chat | 1 | `server/group_messages.*` |
+| 16 | Gửi tin nhắn offline | 1 | `server/messages.*`, `server/group_messages.*` |
+| 17 | Ghi log hoạt động | 1 | `server/logger.*` |
 
 ---
 
@@ -61,7 +62,7 @@ make
 ```
 
 ### 5) Test tự động (khuyến nghị)
-Bộ test tích hợp cover đầy đủ 4 phần base (framing, server IO, accounts, sessions):
+Bộ test tích hợp cover đầy đủ tất cả tính năng với **30 test cases**:
 ```bash
 make clean && make
 python3 tests/itest.py
@@ -69,32 +70,59 @@ python3 tests/itest.py
 ./tests/run.sh
 ```
 
-Test hiện cover:
-- Framing: gửi theo từng byte, nhiều dòng trong 1 send, dòng quá dài bị ngắt
-- Accounts: register hợp lệ/duplicate/invalid
-- Sessions: login/logout/whoami, chặn multi-login, auto cleanup khi disconnect, timeout
-- Concurrency: nhiều client PING song song
+**Test coverage (30 tests):**
+- **Base (6 tests)**: framing, accounts, sessions, concurrency
+- **Friend (8 tests)**: invite/accept/reject/pending/list/delete
+- **Private Message (5 tests)**: PM_SEND, PM_HISTORY, PM_CONVERSATIONS, offline message, real-time push
+- **Group (5 tests)**: GROUP_CREATE, GROUP_ADD, GROUP_REMOVE, GROUP_LEAVE, GROUP_LIST
+- **Group Message (6 tests)**: GM_SEND, GM_HISTORY, real-time push, join/leave notifications, kick handling
 
 ---
 
 ## Cấu trúc thư mục
 
-- `common/`
-  - `framing.c`, `framing.h`: tách TCP stream thành từng dòng kết thúc bằng `\r\n`
-  - `protocol.c`, `protocol.h`: parse/gửi response dạng line-based
-- `server/`
-  - `server.c`: listen/accept + thread-per-connection, cleanup session khi client disconnect
-  - `handlers.c`, `handlers.h`: router theo `VERB` (PING/REGISTER/LOGIN/LOGOUT/WHOAMI)
-  - `accounts.c`, `accounts.h`: file DB tài khoản (`data/users.db`)
-  - `sessions.c`, `sessions.h`: quản lý session token + timeout
-- `client/`
-  - `client.c`: menu test + chế độ `Raw send`
-- `tests/`
-  - `itest.py`: integration tests (khuyến nghị chạy trước khi merge)
-  - `run.sh`: wrapper chạy build + test
-- `data/`
-  - `users.db`: được tạo tự động khi server chạy (nếu chưa có)
-- `Makefile`: build ra `build/server` và `build/client`
+```
+ChatProject-IT4062/
+├── Makefile                    # Build server và client
+├── README.md
+├── build/                      # Binary output
+│   ├── server
+│   └── client
+├── common/                     # Shared modules
+│   ├── framing.c/h             # TCP stream → line-based messages
+│   └── protocol.c/h            # Parse/send response dạng OK/ERR
+├── server/
+│   ├── server.c                # Listen/accept + thread-per-connection
+│   ├── handlers.c/h            # Router theo VERB
+│   ├── accounts.c/h            # User DB (data/users.db)
+│   ├── sessions.c/h            # Session token + timeout + online tracking
+│   ├── friends.c/h             # Invite/accept/reject/list/unfriend
+│   ├── groups.c/h              # Group CRUD + membership
+│   ├── messages.c/h            # Private Message (PM) chat 1-1
+│   ├── group_messages.c/h      # Group Message (GM) chat nhóm
+│   └── logger.c/h              # Ghi log hoạt động (data/server.log)
+├── client/
+│   └── client.c                # Menu-based client + Raw send mode
+├── data/                       # Database files (auto-created)
+│   ├── users.db                # Tài khoản: id|username|salt|hash|email|active
+│   ├── friends.db              # Quan hệ bạn bè
+│   ├── groups.db               # Danh sách nhóm
+│   ├── group_members.db        # Thành viên nhóm
+│   ├── pm/                     # Tin nhắn 1-1: {user1_id}_{user2_id}.txt
+│   ├── gm/                     # Tin nhắn nhóm: {group_id}.txt
+│   └── server.log              # Log hoạt động
+└── tests/                      # Integration tests (Python)
+    ├── itest.py                # Base tests (framing, accounts, sessions)
+    ├── itest_addfriend.py      # Friend invite tests
+    ├── itest_listpending_acc_rej.py  # Pending/accept/reject tests
+    ├── itest_friendlist_status.py    # Friend list + online status
+    ├── itest_deletefriend.py   # Unfriend tests
+    ├── itest_disconnect.py     # Disconnect tests
+    ├── itest_groups_members_add.py   # Group + membership tests
+    ├── itest_private_message.py      # PM tests
+    ├── itest_group_message.py        # GM tests
+    └── run.sh                  # Wrapper chạy build + all tests
+```
 
 ---
 
@@ -129,26 +157,34 @@ Tất cả message là **1 dòng** kết thúc bằng `\r\n`.
 - `FRIEND_LIST <rid> token=...` -> Danh sách bạn bè + online status
 - `FRIEND_DELETE <rid> token=... username=...` -> Hủy kết bạn
 
-### Private Message Commands (Real-time Chat)
+### Group Commands
+- `GROUP_CREATE <rid> token=... name=<group_name>` -> Tạo nhóm (owner là người tạo)
+- `GROUP_ADD <rid> token=... group_id=... username=...` -> Thêm thành viên (chỉ owner)
+- `GROUP_REMOVE <rid> token=... group_id=... username=...` -> Xóa thành viên (chỉ owner)
+- `GROUP_LEAVE <rid> token=... group_id=...` -> Rời nhóm
+- `GROUP_LIST <rid> token=...` -> Danh sách nhóm của user
+
+### Private Message Commands (Real-time Chat 1-1)
 - `PM_CHAT_START <rid> token=... with=<username>` -> Vào chế độ chat với user (bật real-time push)
 - `PM_CHAT_END <rid> token=...` -> Thoát chế độ chat
 - `PM_SEND <rid> token=... to=<username> content=<base64>` -> Gửi tin nhắn (content phải Base64 encoded)
 - `PM_HISTORY <rid> token=... with=<username> [limit=50]` -> Lấy lịch sử chat
 - `PM_CONVERSATIONS <rid> token=...` -> Danh sách các cuộc trò chuyện
 
-**Server Push** (khi user đang ở chế độ chat):
+**Server Push (PM):**
 - `PUSH PM from=<username> content=<base64> msg_id=<id> ts=<timestamp>` -> Tin nhắn real-time từ server
 
-### Group Message Commands (Real-time Group Chat)
+### Group Message Commands (Real-time Chat nhóm)
 - `GM_CHAT_START <rid> token=... group_id=...` -> Vào chế độ chat nhóm (bật real-time push)
 - `GM_CHAT_END <rid> token=...` -> Thoát chế độ chat nhóm
 - `GM_SEND <rid> token=... group_id=... content=<base64>` -> Gửi tin nhắn vào nhóm
 - `GM_HISTORY <rid> token=... group_id=... [limit=50]` -> Lấy lịch sử chat nhóm
 
-**Server Push (Group Chat):**
+**Server Push (GM):**
 - `PUSH GM from=<username> group_id=<id> content=<base64> msg_id=<id> ts=<ts>` -> Tin nhắn nhóm real-time
-- `PUSH GM_JOIN user=<username> group_id=<id>` -> Thông báo ai đó vào nhóm chat
-- `PUSH GM_LEAVE user=<username> group_id=<id>` -> Thông báo ai đó rời nhóm chat
+- `PUSH GM_JOIN user=<username> group_id=<id>` -> Thông báo ai đó vào chế độ chat nhóm
+- `PUSH GM_LEAVE user=<username> group_id=<id>` -> Thông báo ai đó rời chế độ chat nhóm
+- `PUSH GM_KICKED group_id=<id>` -> Thông báo bạn đã bị kick khỏi nhóm
 
 ### Error codes
 - `400`: thiếu field / sai format
@@ -156,6 +192,76 @@ Tất cả message là **1 dòng** kết thúc bằng `\r\n`.
 - `409`: username tồn tại hoặc user đã login nơi khác
 - `422`: field không hợp lệ (username/email/password)
 - `500`: lỗi server
+
+---
+
+## Kiến trúc hệ thống
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                  CLIENT                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────┐│
+│  │  Menu UI  │  Chat Mode (PM/GM)  │  Receive Thread (PUSH handler)       ││
+│  └─────────────────────────────────────────────────────────────────────────┘│
+│                              │ TCP Socket │                                  │
+└──────────────────────────────┴────────────┴──────────────────────────────────┘
+                                     │
+                               ┌─────┴─────┐
+                               │  Network  │
+                               └─────┬─────┘
+                                     │
+┌──────────────────────────────┬─────┴─────┬──────────────────────────────────┐
+│                              │ TCP Socket│                                   │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                         SERVER (Multi-threaded)                      │   │
+│  │  ┌─────────┐  ┌──────────────────────────────────────────────────┐   │   │
+│  │  │ Accept  │→ │  Thread per Connection (handle_client)           │   │   │
+│  │  │ Loop    │  │  ┌─────────────────────────────────────────────┐ │   │   │
+│  │  └─────────┘  │  │ Framing → Parse VERB → Router → Handler     │ │   │   │
+│  │               │  └─────────────────────────────────────────────┘ │   │   │
+│  │               └──────────────────────────────────────────────────┘   │   │
+│  │                                                                      │   │
+│  │  ┌─────────────────────────────────────────────────────────────────┐ │   │
+│  │  │ In-Memory State                                                 │ │   │
+│  │  │  • Sessions (token, user_id, socket_fd, chat_partner,           │ │   │
+│  │  │              chat_group_id, last_activity)                      │ │   │
+│  │  └─────────────────────────────────────────────────────────────────┘ │   │
+│  │                                                                      │   │
+│  │  ┌─────────────────────────────────────────────────────────────────┐ │   │
+│  │  │ File-based Database (data/)                                     │ │   │
+│  │  │  • users.db, friends.db, groups.db, group_members.db            │ │   │
+│  │  │  • pm/{id1}_{id2}.txt, gm/{group_id}.txt                        │ │   │
+│  │  │  • server.log                                                   │ │   │
+│  │  └─────────────────────────────────────────────────────────────────┘ │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                  SERVER                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Luồng xử lý tin nhắn Real-time
+
+**Private Message (PM):**
+```
+A (chat với B)          Server                    B (chat với A)
+     │                    │                            │
+     │ PM_SEND to=B       │                            │
+     ├───────────────────>│ Save to pm/{A_B}.txt       │
+     │                    │───────────────────────────>│ PUSH PM from=A
+     │<───────────────────│ OK                         │
+     │                    │                            │
+```
+
+**Group Message (GM):**
+```
+A (chat nhóm G)         Server                    B,C (cũng chat nhóm G)
+     │                    │                            │
+     │ GM_SEND group=G    │                            │
+     ├───────────────────>│ Save to gm/{G}.txt         │
+     │                    │───────────────────────────>│ PUSH GM (to B)
+     │                    │───────────────────────────>│ PUSH GM (to C)
+     │<───────────────────│ OK                         │
+     │                    │                            │
+```
 
 ---
 
@@ -204,6 +310,15 @@ Tất cả thao tác đọc/ghi file account có mutex để tránh race giữa 
 
 ---
 
+## Logging
+
+Server ghi log tất cả hoạt động vào `data/server.log`:
+- Thời gian, user, action, kết quả
+- Ví dụ: `[2025-01-15 10:30:45] user=alice action=LOGIN result=OK`
+- Module: `server/logger.*`
+
+---
+
 ## Raw send là gì?
 
 `Raw send` cho phép bạn gõ **nguyên 1 dòng request** theo protocol và gửi thẳng lên server (client tự thêm `\r\n`). Dùng để debug nhanh khi bạn vừa thêm verb mới mà chưa làm menu.
@@ -216,24 +331,15 @@ Ví dụ:
 
 ---
 
-## Gợi ý mở rộng cho các tính năng chat
+## Giới hạn hiện tại (cho production)
 
-Mẫu triển khai một verb mới:
-1) Thêm `VERB` trong `server/handlers.c` (parse payload `k=v`)
-2) Nếu verb cần auth: bắt buộc `token=...` và gọi `sessions_validate()`
-3) Tách logic theo module mới trong `server/` (ví dụ `friends.c`, `groups.c`, `messages.c`)
-4) Cập nhật client menu hoặc dùng `Raw send` để test
-
-Gợi ý chia module theo rubric:
-- `friends.*`: invite/accept/deny/unfriend + list bạn + online status
-- `pm.*`: nhắn tin 1-1 + offline message
-- `groups.*`: create/add/remove/leave + group message + history
-- `log.*`: ghi log hoạt động
+- Protocol `k=v` chưa hỗ trợ value có khoảng trắng → dùng Base64 cho message content
+- Password hashing chỉ mang tính học tập (không phải bcrypt/argon2)
+- Session chưa persist (restart server là mất session)
+- File DB dùng mutex, chưa tối ưu cho concurrent write cao
 
 ---
 
-## Giới hạn hiện tại
+## Tác giả
 
-- Protocol `k=v` chưa hỗ trợ value có khoảng trắng (nếu cần, cân nhắc JSON hoặc length-prefix)
-- Password hashing chỉ mang tính học tập
-- Session chưa persist (restart server là mất session)
+Nhóm 3 - IT4062 - HUST
