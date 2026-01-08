@@ -12,6 +12,7 @@
 #include "accounts.h"
 #include "sessions.h"
 #include "messages.h"
+#include "group_messages.h"
 
 /*
  * server/server.c
@@ -109,6 +110,9 @@ int main(int argc, char** argv)
 
     // Initialize PM module
     pm_init();
+
+    // Initialize Group Message module
+    gm_init();
 
     sessions_init(session_timeout_seconds);
 

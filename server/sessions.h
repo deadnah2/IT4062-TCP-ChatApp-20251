@@ -54,4 +54,19 @@ int sessions_get_socket(int user_id);
 // Kiểm tra user có đang chat với partner cụ thể không
 int sessions_is_chatting_with(int user_id, int partner_user_id);
 
+// ============ Group Chat Mode ============
+
+// Set group chat cho user (0 để clear)
+void sessions_set_chat_group(int user_id, int group_id);
+
+// Lấy group_id user đang chat (0 nếu không trong group chat)
+int sessions_get_chat_group(int user_id);
+
+// Kiểm tra user có đang trong group chat cụ thể không
+int sessions_is_in_group_chat(int user_id, int group_id);
+
+// Lấy danh sách user đang trong group chat (để broadcast)
+// Return: số lượng user, lưu user_ids vào out_user_ids
+int sessions_get_users_in_group_chat(int group_id, int *out_user_ids, int max_users);
+
 #endif

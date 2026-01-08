@@ -17,7 +17,7 @@ Dự án này là **khung TCP client/server** cho đồ án chat (IT4062). READM
 - [x] Thêm người dùng khác vào nhóm chat: 1 điểm
 - [x] Xóa người dùng ra khỏi nhóm chat: 1 điểm
 - [x] Rời nhóm chat: 1 điểm
-- [ ] Gửi nhận thông điệp trong nhóm chat: 1 điểm
+- [x] Gửi nhận thông điệp trong nhóm chat: 1 điểm
 - [x] Gửi tin nhắn offline: 1 điểm
 - [x] Ghi log hoạt động: 1 điểm
 
@@ -138,6 +138,17 @@ Tất cả message là **1 dòng** kết thúc bằng `\r\n`.
 
 **Server Push** (khi user đang ở chế độ chat):
 - `PUSH PM from=<username> content=<base64> msg_id=<id> ts=<timestamp>` -> Tin nhắn real-time từ server
+
+### Group Message Commands (Real-time Group Chat)
+- `GM_CHAT_START <rid> token=... group_id=...` -> Vào chế độ chat nhóm (bật real-time push)
+- `GM_CHAT_END <rid> token=...` -> Thoát chế độ chat nhóm
+- `GM_SEND <rid> token=... group_id=... content=<base64>` -> Gửi tin nhắn vào nhóm
+- `GM_HISTORY <rid> token=... group_id=... [limit=50]` -> Lấy lịch sử chat nhóm
+
+**Server Push (Group Chat):**
+- `PUSH GM from=<username> group_id=<id> content=<base64> msg_id=<id> ts=<ts>` -> Tin nhắn nhóm real-time
+- `PUSH GM_JOIN user=<username> group_id=<id>` -> Thông báo ai đó vào nhóm chat
+- `PUSH GM_LEAVE user=<username> group_id=<id>` -> Thông báo ai đó rời nhóm chat
 
 ### Error codes
 - `400`: thiếu field / sai format

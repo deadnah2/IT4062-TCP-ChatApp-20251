@@ -89,24 +89,38 @@ class Conn:
         self.sock = socket.create_connection((host, port), timeout=5)
         self.buf = b""
         self.req_id = 0
+        self.push_queue = []  # Queue for PUSH messages received while waiting for response
 
     def send_line(self, line: str):
         self.sock.sendall((line + "\r\n").encode())
 
-    def recv_line(self, timeout: float = 3.0) -> str:
+    def recv_line(self, timeout: float = 3.0, skip_push: bool = True) -> str:
+        """Receive next line. If skip_push=True, PUSH messages are queued and skipped."""
         self.sock.settimeout(timeout)
-        while b"\r\n" not in self.buf:
-            d = self.sock.recv(4096)
-            if not d:
-                raise EOFError("disconnected")
-            self.buf += d
-        line, self.buf = self.buf.split(b"\r\n", 1)
-        return line.decode()
+        while True:
+            while b"\r\n" not in self.buf:
+                d = self.sock.recv(4096)
+                if not d:
+                    raise EOFError("disconnected")
+                self.buf += d
+            line, self.buf = self.buf.split(b"\r\n", 1)
+            line_str = line.decode()
+            
+            # If this is a PUSH and we're skipping, queue it and continue
+            if skip_push and line_str.startswith("PUSH "):
+                self.push_queue.append(line_str)
+                continue
+            
+            return line_str
 
     def try_recv_line(self, timeout: float = 0.5) -> str | None:
-        """Try to receive a line, return None if timeout"""
+        """Try to receive a line (PUSH or response), return None if timeout.
+        First checks push_queue, then reads from socket."""
+        # First check if we have queued PUSH messages
+        if self.push_queue:
+            return self.push_queue.pop(0)
         try:
-            return self.recv_line(timeout)
+            return self.recv_line(timeout, skip_push=False)
         except socket.timeout:
             return None
         except Exception:
@@ -453,15 +467,24 @@ def test_realtime_push(port: int):
         _, _, _, token_a = c1.login("push_a", "pass123")
         _, _, _, token_b = c2.login("push_b", "pass123")
         
-        # Both enter chat mode with each other
+        # A enters chat mode first
         c1.pm_chat_start(token_a, "push_b")
+        
+        # B enters chat mode - A should receive PUSH JOIN
         c2.pm_chat_start(token_b, "push_a")
+        
+        # Clear any PUSH JOIN that A may have received
+        join_line = c1.try_recv_line(timeout=0.5)
+        if join_line and "PUSH JOIN" in join_line:
+            pass  # Expected - B joined
         
         # A sends message to B
         c1.pm_send(token_a, "push_b", "Real-time message!")
         
-        # B should receive PUSH immediately
+        # B should receive PUSH PM immediately (skip any JOIN messages)
         push_line = c2.try_recv_line(timeout=2.0)
+        while push_line and push_line.startswith("PUSH JOIN"):
+            push_line = c2.try_recv_line(timeout=2.0)
         
         if push_line is None:
             die("B did not receive PUSH message")
@@ -476,8 +499,10 @@ def test_realtime_push(port: int):
         # B sends reply
         c2.pm_send(token_b, "push_a", "Got it!")
         
-        # A should receive PUSH
+        # A should receive PUSH PM (skip any JOIN/LEAVE)
         push_line = c1.try_recv_line(timeout=2.0)
+        while push_line and not push_line.startswith("PUSH PM"):
+            push_line = c1.try_recv_line(timeout=2.0)
         
         if push_line is None:
             die("A did not receive PUSH message")
@@ -957,6 +982,91 @@ def test_message_from_third_party_while_chatting(port: int):
         c3.close()
 
 
+def test_cannot_chat_with_yourself(port: int):
+    """Test 13: Cannot chat with yourself"""
+    info("Test 13: Cannot chat with yourself")
+    
+    c1 = Conn("127.0.0.1", port)
+    
+    try:
+        # Register and login
+        c1.register("self_user", "pass123", "self@test.com")
+        _, _, _, token = c1.login("self_user", "pass123")
+        
+        # Try to start chat with yourself - should fail
+        kind, _, rest = c1.pm_chat_start(token, "self_user")
+        
+        if kind == "OK":
+            die("Should not be able to chat with yourself")
+        
+        if kind != "ERR":
+            die(f"Expected ERR, got: {kind}")
+        
+        if "cannot_chat_with_yourself" not in rest:
+            die(f"Expected cannot_chat_with_yourself error, got: {rest}")
+        
+        ok("Cannot chat with yourself - correctly rejected")
+        
+    finally:
+        c1.close()
+
+
+def test_join_leave_notifications(port: int):
+    """Test 14: Join/Leave notifications when partner enters/exits chat"""
+    info("Test 14: Join/Leave notifications")
+    
+    c1 = Conn("127.0.0.1", port)
+    c2 = Conn("127.0.0.1", port)
+    
+    try:
+        # Register and login
+        c1.register("notify_a", "pass123", "notify_a@test.com")
+        c2.register("notify_b", "pass123", "notify_b@test.com")
+        
+        _, _, _, token_a = c1.login("notify_a", "pass123")
+        _, _, _, token_b = c2.login("notify_b", "pass123")
+        
+        # A enters chat with B first
+        c1.pm_chat_start(token_a, "notify_b")
+        
+        # B enters chat with A - A should receive PUSH JOIN
+        c2.pm_chat_start(token_b, "notify_a")
+        
+        # Check if A received JOIN notification
+        join_line = c1.try_recv_line(timeout=1.0)
+        
+        if join_line is None:
+            die("A did not receive JOIN notification")
+        
+        if not join_line.startswith("PUSH JOIN"):
+            die(f"Expected PUSH JOIN, got: {join_line}")
+        
+        if "notify_b" not in join_line:
+            die(f"JOIN notification should contain partner name: {join_line}")
+        
+        # B exits chat - A should receive PUSH LEAVE
+        c2.pm_chat_end(token_b)
+        
+        leave_line = c1.try_recv_line(timeout=1.0)
+        
+        if leave_line is None:
+            die("A did not receive LEAVE notification")
+        
+        if not leave_line.startswith("PUSH LEAVE"):
+            die(f"Expected PUSH LEAVE, got: {leave_line}")
+        
+        if "notify_b" not in leave_line:
+            die(f"LEAVE notification should contain partner name: {leave_line}")
+        
+        c1.pm_chat_end(token_a)
+        
+        ok("Join/Leave notifications work correctly")
+        
+    finally:
+        c1.close()
+        c2.close()
+
+
 # ============ Main ============
 
 def run_all_tests():
@@ -982,6 +1092,8 @@ def run_all_tests():
         test_invalid_token(port)
         test_concurrent_chats(port)
         test_message_from_third_party_while_chatting(port)
+        test_cannot_chat_with_yourself(port)
+        test_join_leave_notifications(port)
         
         print("\n" + "=" * 50)
         print("All Private Message tests PASSED! ✅")

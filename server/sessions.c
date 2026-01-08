@@ -23,7 +23,8 @@ typedef struct {
     int client_socket;
     time_t created_at;
     time_t last_activity;
-    int chat_partner_id;  // User ID của partner đang chat (0 nếu không trong chat mode)
+    int chat_partner_id;  // User ID của partner đang chat 1-1 (0 nếu không trong PM mode)
+    int chat_group_id;    // Group ID đang chat (0 nếu không trong group chat mode)
 } Session;
 
 static pthread_mutex_t g_sess_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -280,4 +281,66 @@ int sessions_is_chatting_with(int user_id, int partner_user_id)
     }
     pthread_mutex_unlock(&g_sess_mutex);
     return result;
+}
+
+// ============ Group Chat Mode ============
+
+void sessions_set_chat_group(int user_id, int group_id)
+{
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (g_sessions[i].active && g_sessions[i].user_id == user_id) {
+            g_sessions[i].chat_group_id = group_id;
+            // Clear PM partner khi vào group chat
+            if (group_id > 0) {
+                g_sessions[i].chat_partner_id = 0;
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+}
+
+int sessions_get_chat_group(int user_id)
+{
+    int group_id = 0;
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (g_sessions[i].active && g_sessions[i].user_id == user_id) {
+            group_id = g_sessions[i].chat_group_id;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+    return group_id;
+}
+
+int sessions_is_in_group_chat(int user_id, int group_id)
+{
+    int result = 0;
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (g_sessions[i].active && 
+            g_sessions[i].user_id == user_id &&
+            g_sessions[i].chat_group_id == group_id) {
+            result = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+    return result;
+}
+
+int sessions_get_users_in_group_chat(int group_id, int *out_user_ids, int max_users)
+{
+    // Lấy danh sách user_id đang trong group chat này
+    int count = 0;
+    pthread_mutex_lock(&g_sess_mutex);
+    for (int i = 0; i < MAX_SESSIONS && count < max_users; i++) {
+        if (g_sessions[i].active && g_sessions[i].chat_group_id == group_id) {
+            out_user_ids[count++] = g_sessions[i].user_id;
+        }
+    }
+    pthread_mutex_unlock(&g_sess_mutex);
+    return count;
 }

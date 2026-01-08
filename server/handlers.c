@@ -12,6 +12,7 @@
 #include "friends.h"
 #include "messages.h"
 #include "groups.h"
+#include "group_messages.h"
 #include "logger.h"
 
 /*
@@ -816,12 +817,30 @@ int handle_request(ServerCtx *ctx, const char *line)
         }
 
         int gid = atoi(gid_str);
+        
+        // Lấy user_id của người bị remove trước khi xóa (để kick khỏi chat mode)
+        int removed_user_id = accounts_get_user_id(username);
+        
         int rc = groups_remove_member(user_id, gid, username);
 
         log_event("rid=%s action=%s status=%d payload=' %s '", msg.req_id, msg.verb, rc, safe_payload(msg.payload));
 
         if (rc == GROUP_OK)
         {
+            // Nếu user bị remove đang trong group chat mode của group này, kick họ ra
+            if (removed_user_id > 0 && sessions_is_in_group_chat(removed_user_id, gid)) {
+                // Gửi PUSH GM_KICKED cho user bị remove
+                int removed_sock = sessions_get_socket(removed_user_id);
+                if (removed_sock > 0) {
+                    char kick_msg[256];
+                    snprintf(kick_msg, sizeof(kick_msg),
+                             "PUSH GM_KICKED group_id=%d reason=removed_by_owner\r\n", gid);
+                    send(removed_sock, kick_msg, strlen(kick_msg), 0);
+                }
+                // Clear group chat mode
+                sessions_set_chat_group(removed_user_id, 0);
+            }
+            
             char payload[128];
             snprintf(payload, sizeof(payload),
                      "group_id=%d username=%s status=removed",
@@ -873,6 +892,11 @@ int handle_request(ServerCtx *ctx, const char *line)
 
         if (rc == GROUP_OK)
         {
+            // Nếu user đang trong group chat mode của group này, tự động thoát
+            if (sessions_is_in_group_chat(user_id, gid)) {
+                sessions_set_chat_group(user_id, 0);
+            }
+            
             char payload[64];
             snprintf(payload, sizeof(payload),
                      "group_id=%d status=left", gid);
@@ -936,8 +960,29 @@ int handle_request(ServerCtx *ctx, const char *line)
             return 0;
         }
 
+        // Không được chat với chính mình
+        if (partner_id == user_id)
+        {
+            send_simple_err(ctx->client_sock, msg.req_id, 422, "cannot_chat_with_yourself");
+            proto_free(&msg);
+            return 0;
+        }
+
         // Set chat_partner để server biết push message tới ai
         sessions_set_chat_partner(user_id, partner_id);
+
+        // Thông báo cho partner nếu họ đang chat với mình
+        if (sessions_is_chatting_with(partner_id, user_id))
+        {
+            int partner_sock = sessions_get_socket(partner_id);
+            if (partner_sock > 0)
+            {
+                char push_msg[256];
+                snprintf(push_msg, sizeof(push_msg),
+                         "PUSH JOIN user=%s\r\n", my_username);
+                send(partner_sock, push_msg, strlen(push_msg), 0);
+            }
+        }
 
         // Đánh dấu messages là đã đọc
         pm_mark_read(user_id, with_user);
@@ -975,7 +1020,7 @@ int handle_request(ServerCtx *ctx, const char *line)
             return 0;
         }
 
-        // Lấy partner_id trước khi clear để mark_read
+        // Lấy partner_id trước khi clear để mark_read và gửi thông báo
         int partner_id = sessions_get_chat_partner(user_id);
         if (partner_id > 0)
         {
@@ -984,6 +1029,23 @@ int handle_request(ServerCtx *ctx, const char *line)
             {
                 // Đánh dấu tất cả tin nhắn đã đọc khi thoát chat
                 pm_mark_read(user_id, partner_username);
+            }
+
+            // Thông báo cho partner nếu họ đang chat với mình
+            if (sessions_is_chatting_with(partner_id, user_id))
+            {
+                int partner_sock = sessions_get_socket(partner_id);
+                if (partner_sock > 0)
+                {
+                    char my_username[64];
+                    if (accounts_get_username(user_id, my_username, sizeof(my_username)))
+                    {
+                        char push_msg[256];
+                        snprintf(push_msg, sizeof(push_msg),
+                                 "PUSH LEAVE user=%s\r\n", my_username);
+                        send(partner_sock, push_msg, strlen(push_msg), 0);
+                    }
+                }
             }
         }
 
@@ -1174,6 +1236,244 @@ int handle_request(ServerCtx *ctx, const char *line)
         proto_send_ok(ctx->client_sock, msg.req_id, "disconnected=1");
         proto_free(&msg);
         return -1; // Signal to close connection
+    }
+
+    // ============ Group Messaging (Nhắn tin nhóm) ============
+
+    // GM_CHAT_START - Vào group chat mode
+    if (strcmp(msg.verb, "GM_CHAT_START") == 0) {
+        char token[128], gid_str[32];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "group_id", gid_str, sizeof(gid_str))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int group_id = atoi(gid_str);
+
+        // Kiểm tra user là member của group
+        if (!gm_is_member(user_id, group_id)) {
+            send_simple_err(ctx->client_sock, msg.req_id, 403, "not_group_member");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // Lấy username của mình
+        char my_username[64];
+        if (!accounts_get_username(user_id, my_username, sizeof(my_username))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "internal_error");
+            proto_free(&msg);
+            return 0;
+        }
+
+        // Lấy tên group
+        char group_name[64] = {0};
+        gm_get_group_name(group_id, group_name, sizeof(group_name));
+
+        // Set chat group mode
+        sessions_set_chat_group(user_id, group_id);
+
+        // Thông báo cho các members khác đang trong group chat
+        int member_ids[100];
+        int member_count = sessions_get_users_in_group_chat(group_id, member_ids, 100);
+        for (int i = 0; i < member_count; i++) {
+            if (member_ids[i] != user_id) {
+                int sock = sessions_get_socket(member_ids[i]);
+                if (sock > 0) {
+                    char push_msg[256];
+                    snprintf(push_msg, sizeof(push_msg),
+                             "PUSH GM_JOIN user=%s group_id=%d\r\n", my_username, group_id);
+                    send(sock, push_msg, strlen(push_msg), 0);
+                }
+            }
+        }
+
+        // Lấy history
+        char history[8192] = {0};
+        gm_get_history(user_id, group_id, history, sizeof(history), 50);
+
+        char payload[8500];
+        snprintf(payload, sizeof(payload), "group_id=%d group_name=%s me=%s history=%s",
+                 group_id, group_name[0] ? group_name : "unknown", 
+                 my_username, history[0] ? history : "empty");
+        proto_send_ok(ctx->client_sock, msg.req_id, payload);
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // GM_CHAT_END - Thoát group chat mode
+    if (strcmp(msg.verb, "GM_CHAT_END") == 0) {
+        char token[128];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int group_id = sessions_get_chat_group(user_id);
+
+        if (group_id > 0) {
+            // Lấy username
+            char my_username[64];
+            if (accounts_get_username(user_id, my_username, sizeof(my_username))) {
+                // Thông báo cho các members khác đang trong group chat
+                int member_ids[100];
+                int member_count = sessions_get_users_in_group_chat(group_id, member_ids, 100);
+                for (int i = 0; i < member_count; i++) {
+                    if (member_ids[i] != user_id) {
+                        int sock = sessions_get_socket(member_ids[i]);
+                        if (sock > 0) {
+                            char push_msg[256];
+                            snprintf(push_msg, sizeof(push_msg),
+                                     "PUSH GM_LEAVE user=%s group_id=%d\r\n", my_username, group_id);
+                            send(sock, push_msg, strlen(push_msg), 0);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clear group chat mode
+        sessions_set_chat_group(user_id, 0);
+
+        proto_send_ok(ctx->client_sock, msg.req_id, "status=chat_ended");
+        proto_free(&msg);
+        return 0;
+    }
+
+    // GM_SEND - Gửi tin nhắn vào group
+    if (strcmp(msg.verb, "GM_SEND") == 0) {
+        char token[128], gid_str[32], content[4096];
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "group_id", gid_str, sizeof(gid_str)) ||
+            !kv_get(msg.payload, "content", content, sizeof(content))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int group_id = atoi(gid_str);
+
+        // Gửi tin nhắn
+        int msg_id = 0;
+        int rc = gm_send(user_id, group_id, content, &msg_id);
+
+        if (rc == GM_OK) {
+            // Lấy username để push
+            char from_username[64];
+            accounts_get_username(user_id, from_username, sizeof(from_username));
+
+            long ts = (long)time(NULL);
+
+            // Broadcast PUSH cho tất cả members đang trong group chat (trừ sender)
+            int member_ids[100];
+            int member_count = gm_get_member_ids(group_id, member_ids, 100);
+            
+            for (int i = 0; i < member_count; i++) {
+                if (member_ids[i] != user_id) {
+                    // Chỉ push cho những ai đang trong group chat này
+                    if (sessions_is_in_group_chat(member_ids[i], group_id)) {
+                        int sock = sessions_get_socket(member_ids[i]);
+                        if (sock > 0) {
+                            char push_msg[8192];
+                            snprintf(push_msg, sizeof(push_msg),
+                                     "PUSH GM from=%s group_id=%d content=%s msg_id=%d ts=%ld\r\n",
+                                     from_username, group_id, content, msg_id, ts);
+                            send(sock, push_msg, strlen(push_msg), 0);
+                        }
+                    }
+                }
+            }
+
+            char payload[128];
+            snprintf(payload, sizeof(payload), "msg_id=%d group_id=%d status=sent", msg_id, group_id);
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (rc == GM_ERR_NOT_MEMBER) {
+            send_simple_err(ctx->client_sock, msg.req_id, 403, "not_group_member");
+        }
+        else if (rc == GM_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "group_not_found");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
+    }
+
+    // GM_HISTORY - Lấy lịch sử chat của group
+    if (strcmp(msg.verb, "GM_HISTORY") == 0) {
+        char token[128], gid_str[32], limit_str[16] = {0};
+
+        if (!kv_get(msg.payload, "token", token, sizeof(token)) ||
+            !kv_get(msg.payload, "group_id", gid_str, sizeof(gid_str))) {
+            send_simple_err(ctx->client_sock, msg.req_id, 400, "missing_fields");
+            proto_free(&msg);
+            return 0;
+        }
+
+        kv_get(msg.payload, "limit", limit_str, sizeof(limit_str));
+        int limit = limit_str[0] ? atoi(limit_str) : 50;
+        if (limit <= 0 || limit > 200) limit = 50;
+
+        int user_id;
+        if (sessions_validate(token, &user_id) != SESS_OK) {
+            send_simple_err(ctx->client_sock, msg.req_id, 401, "invalid_token");
+            proto_free(&msg);
+            return 0;
+        }
+
+        int group_id = atoi(gid_str);
+
+        char history[8192] = {0};
+        int rc = gm_get_history(user_id, group_id, history, sizeof(history), limit);
+
+        if (rc == GM_OK) {
+            char payload[8400];
+            snprintf(payload, sizeof(payload), "group_id=%d history=%s",
+                     group_id, history[0] ? history : "empty");
+            proto_send_ok(ctx->client_sock, msg.req_id, payload);
+        }
+        else if (rc == GM_ERR_NOT_MEMBER) {
+            send_simple_err(ctx->client_sock, msg.req_id, 403, "not_group_member");
+        }
+        else if (rc == GM_ERR_NOT_FOUND) {
+            send_simple_err(ctx->client_sock, msg.req_id, 404, "group_not_found");
+        }
+        else {
+            send_simple_err(ctx->client_sock, msg.req_id, 500, "server_error");
+        }
+
+        proto_free(&msg);
+        return 0;
     }
 
     send_simple_err(ctx->client_sock, msg.req_id, 404, "unknown_command");

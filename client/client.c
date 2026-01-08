@@ -266,6 +266,8 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
 
 void client_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id);
 
+void client_group_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id, int group_id);
+
 static void menu(int logged_in)
 {
     printf("\n" C_TITLE "══════════════════════════════════\n");
@@ -288,7 +290,6 @@ static void menu(int logged_in)
         printf(" 8. " ICON_FRIEND " View friend list\n");
         printf(" 9. " ICON_GROUP " Group\n");
         printf("10. " ICON_CHAT " Chat (Private Message)\n");
-        printf("11. " ICON_EXIT " Disconnect (logout + exit)\n");
     }
 
     printf(" 0. " ICON_EXIT " Exit\n");
@@ -342,7 +343,25 @@ int main(int argc, char **argv)
             ;
 
         if (choice == 0)
+        {
+            // Exit - gửi DISCONNECT nếu đang login để thoát sạch
+            if (token[0]) {
+                char disc_rid[32];
+                snprintf(disc_rid, sizeof(disc_rid), "%d", next_id++);
+                char disc_req[256];
+                snprintf(disc_req, sizeof(disc_req), "DISCONNECT %s token=%s", disc_rid, token);
+                send_line(s, disc_req);
+                
+                // Đọc response
+                char resp[4096];
+                int r = framer_recv_line(s, &fr, resp, sizeof(resp));
+                if (r > 0) {
+                    printf("< %s\n", resp);
+                }
+                printf(C_OK "Disconnected from server.\n" C_RESET);
+            }
             break;
+        }
 
         char rid[32];
         snprintf(rid, sizeof(rid), "%d", next_id++);
@@ -600,29 +619,6 @@ int main(int argc, char **argv)
             continue;
         }
 
-        else if (choice == 11)
-        {
-            // DISCONNECT - hủy session và đóng connection
-            char rid[32];
-            snprintf(rid, sizeof(rid), "%d", next_id++);
-
-            if (token[0]) {
-                snprintf(req, sizeof(req), "DISCONNECT %s token=%s", rid, token);
-            } else {
-                snprintf(req, sizeof(req), "DISCONNECT %s", rid);
-            }
-            send_line(s, req);
-
-            // Đọc response rồi thoát
-            char resp[4096];
-            int r = framer_recv_line(s, &fr, resp, sizeof(resp));
-            if (r > 0) {
-                printf("< %s\n", resp);
-            }
-            printf(C_OK "Disconnected from server.\n" C_RESET);
-            break;  // Thoát vòng lặp main
-        }
-
         else
         {
             printf("Invalid choice\n");
@@ -871,6 +867,7 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
         printf(" r <gid> <user>        Remove member (owner)\n");
         printf(" m <gid>               View members\n");
         printf(" l <gid>               Leave group\n");
+        printf(" " C_OK "g <gid>               💬 Enter group chat\n" C_RESET);
         printf(" q                     Back to menu\n");
         printf("> ");
 
@@ -926,6 +923,12 @@ void client_show_groups(int sock, LineFramer *fr, const char *token, int *next_i
             snprintf(req, sizeof(req),
                     "GROUP_LEAVE %s token=%s group_id=%d",
                     rid, token, gid);
+        }
+        else if (sscanf(line, "%c %d", &cmd, &gid) == 2 && cmd == 'g')
+        {
+            // ENTER GROUP CHAT
+            client_group_chat_mode(sock, fr, token, next_id, gid);
+            continue;  // Refresh group list after chat
         }
         else
         {
@@ -1078,6 +1081,28 @@ static void *chat_recv_thread(void *arg)
                 if (from[0] && content[0]) {
                     long ts = ts_str[0] ? atol(ts_str) : (long)time(NULL);
                     print_message(from, content, ts);
+                }
+            }
+            // PUSH JOIN - đối phương vào cuộc trò chuyện
+            else if (strncmp(line_start, "PUSH JOIN ", 10) == 0) {
+                char *payload = line_start + 10;
+                char user[64] = {0};
+                kv_get(payload, "user", user, sizeof(user));
+                if (user[0]) {
+                    printf(C_INFO "\n  >>> %s đã vào cuộc trò chuyện <<<\n" C_RESET, user);
+                    printf("> ");
+                    fflush(stdout);
+                }
+            }
+            // PUSH LEAVE - đối phương rời cuộc trò chuyện
+            else if (strncmp(line_start, "PUSH LEAVE ", 11) == 0) {
+                char *payload = line_start + 11;
+                char user[64] = {0};
+                kv_get(payload, "user", user, sizeof(user));
+                if (user[0]) {
+                    printf(C_WARN "\n  <<< %s đã rời cuộc trò chuyện >>>\n" C_RESET, user);
+                    printf("> ");
+                    fflush(stdout);
                 }
             }
             
@@ -1390,3 +1415,236 @@ void client_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id)
     printf(C_INFO "\nChat ended. Returning to menu...\n" C_RESET);
 }
 
+// ============ Group Chat Mode Implementation ============
+// Tương tự PM chat mode nhưng broadcast cho nhiều người
+
+static volatile int g_group_chat_id = 0;       // Group ID đang chat
+static char g_group_name[64] = {0};            // Tên group đang chat
+
+static void *group_chat_recv_thread(void *arg)
+{
+    (void)arg;
+    
+    char buf[8192];
+    int buf_len = 0;
+    
+    while (g_in_chat_mode && g_chat_sock > 0) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(g_chat_sock, &fds);
+        
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 200000;
+        
+        int ret = select(g_chat_sock + 1, &fds, NULL, NULL, &tv);
+        
+        if (!g_in_chat_mode) break;
+        
+        if (ret <= 0) continue;
+        
+        char tmp[4096];
+        int n = recv(g_chat_sock, tmp, sizeof(tmp) - 1, 0);
+        if (n <= 0) {
+            g_in_chat_mode = 0;
+            break;
+        }
+        
+        tmp[n] = '\0';
+        
+        if (buf_len + n < (int)sizeof(buf) - 1) {
+            memcpy(buf + buf_len, tmp, n + 1);
+            buf_len += n;
+        }
+        
+        char *line_start = buf;
+        char *crlf;
+        while ((crlf = strstr(line_start, "\r\n")) != NULL) {
+            *crlf = '\0';
+            
+            // PUSH GM - tin nhắn group
+            if (strncmp(line_start, "PUSH GM ", 8) == 0) {
+                char *payload = line_start + 8;
+                
+                char from[64] = {0}, content[4096] = {0}, ts_str[32] = {0};
+                
+                kv_get(payload, "from", from, sizeof(from));
+                kv_get(payload, "content", content, sizeof(content));
+                kv_get(payload, "ts", ts_str, sizeof(ts_str));
+                
+                if (from[0] && content[0]) {
+                    long ts = ts_str[0] ? atol(ts_str) : (long)time(NULL);
+                    print_message(from, content, ts);
+                }
+            }
+            // PUSH GM_JOIN - ai đó vào group chat
+            else if (strncmp(line_start, "PUSH GM_JOIN ", 13) == 0) {
+                char *payload = line_start + 13;
+                char user[64] = {0};
+                kv_get(payload, "user", user, sizeof(user));
+                if (user[0]) {
+                    printf(C_INFO "\n  >>> %s đã vào nhóm chat <<<\n" C_RESET, user);
+                    printf("> ");
+                    fflush(stdout);
+                }
+            }
+            // PUSH GM_LEAVE - ai đó rời group chat
+            else if (strncmp(line_start, "PUSH GM_LEAVE ", 14) == 0) {
+                char *payload = line_start + 14;
+                char user[64] = {0};
+                kv_get(payload, "user", user, sizeof(user));
+                if (user[0]) {
+                    printf(C_WARN "\n  <<< %s đã rời nhóm chat >>>\n" C_RESET, user);
+                    printf("> ");
+                    fflush(stdout);
+                }
+            }
+            // PUSH GM_KICKED - bị kick khỏi group
+            else if (strncmp(line_start, "PUSH GM_KICKED ", 15) == 0) {
+                printf(C_WARN "\n  !!! Bạn đã bị xóa khỏi nhóm. Thoát chat mode... !!!\n" C_RESET);
+                fflush(stdout);
+                g_in_chat_mode = 0;  // Thoát chat loop
+            }
+            
+            line_start = crlf + 2;
+        }
+        
+        if (line_start > buf) {
+            int remaining = buf_len - (line_start - buf);
+            if (remaining > 0) {
+                memmove(buf, line_start, remaining);
+            }
+            buf_len = remaining;
+            buf[buf_len] = '\0';
+        }
+    }
+    
+    return NULL;
+}
+
+void client_group_chat_mode(int sock, LineFramer *fr, const char *token, int *next_id, int group_id)
+{
+    char req[4096], resp[8192];
+    char rid[32];
+    
+    // Gửi GM_CHAT_START
+    snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+    snprintf(req, sizeof(req), "GM_CHAT_START %s token=%s group_id=%d", rid, token, group_id);
+    send_line(sock, req);
+    
+    int r = framer_recv_line(sock, fr, resp, sizeof(resp));
+    if (r <= 0) {
+        printf("Disconnected\n");
+        return;
+    }
+    
+    char kind[32], rrid[32], rest[8192];
+    parse_response(resp, kind, sizeof(kind), rrid, sizeof(rrid), rest, sizeof(rest));
+    
+    if (strcmp(kind, "OK") != 0) {
+        printf(C_WARN "Failed to start group chat: %s\n" C_RESET, rest);
+        return;
+    }
+    
+    // Parse response
+    char history[8192] = {0};
+    char group_name[64] = {0};
+    char my_username[64] = {0};
+    
+    kv_get(rest, "history", history, sizeof(history));
+    kv_get(rest, "group_name", group_name, sizeof(group_name));
+    kv_get(rest, "me", my_username, sizeof(my_username));
+    
+    // Lưu state
+    g_group_chat_id = group_id;
+    snprintf(g_group_name, sizeof(g_group_name), "%s", group_name);
+    snprintf(g_my_username, sizeof(g_my_username), "%s", my_username);
+    g_chat_sock = sock;
+    g_in_chat_mode = 1;
+    
+    // Hiển thị header
+    printf("\n" C_TITLE "══════════════════════════════════\n");
+    printf("      💬 Group: %s (ID: %d)\n", group_name, group_id);
+    printf("══════════════════════════════════\n" C_RESET);
+    printf("Type your message and press Enter to send.\n");
+    printf("Type 'quit' or 'q' to exit chat.\n");
+    printf(C_TITLE "──────────────────────────────────\n" C_RESET);
+    
+    // Hiển thị history
+    display_chat_history(history, my_username);
+    
+    // Start receive thread
+    if (pthread_create(&g_recv_thread, NULL, group_chat_recv_thread, NULL) != 0) {
+        printf("Failed to create receive thread\n");
+        g_in_chat_mode = 0;
+        return;
+    }
+    
+    // Main input loop
+    while (g_in_chat_mode) {
+        printf("> ");
+        fflush(stdout);
+        
+        char input[2048];
+        if (!fgets(input, sizeof(input), stdin)) {
+            break;
+        }
+        trim_line(input);
+        
+        if (!input[0]) continue;
+        
+        // Check quit
+        if (strcasecmp(input, "quit") == 0 || strcasecmp(input, "q") == 0) {
+            g_in_chat_mode = 0;
+            break;
+        }
+        
+        // Encode message
+        char content_b64[4096];
+        if (base64_encode((unsigned char *)input, strlen(input), content_b64, sizeof(content_b64)) < 0) {
+            printf(C_WARN "Message too long\n" C_RESET);
+            continue;
+        }
+        
+        // Gửi tin nhắn (fire-and-forget style)
+        snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+        snprintf(req, sizeof(req), "GM_SEND %s token=%s group_id=%d content=%s",
+                 rid, token, group_id, content_b64);
+        send_line(sock, req);
+        
+        // Hiển thị message của mình ngay lập tức
+        print_message(my_username, content_b64, (long)time(NULL));
+        
+        // Đọc response trong background (bỏ qua)
+        // Receive thread sẽ xử lý các PUSH messages
+    }
+    
+    // Gửi GM_CHAT_END (fire-and-forget)
+    snprintf(rid, sizeof(rid), "%d", (*next_id)++);
+    snprintf(req, sizeof(req), "GM_CHAT_END %s token=%s", rid, token);
+    send_line(sock, req);
+    
+    // Đợi receive thread
+    struct timespec ts_sleep = {0, 300000000};
+    nanosleep(&ts_sleep, NULL);
+    pthread_join(g_recv_thread, NULL);
+    
+    // Flush socket
+    struct timeval tv_flush;
+    tv_flush.tv_sec = 0;
+    tv_flush.tv_usec = 100000;
+    fd_set flush_fds;
+    FD_ZERO(&flush_fds);
+    FD_SET(sock, &flush_fds);
+    if (select(sock + 1, &flush_fds, NULL, NULL, &tv_flush) > 0) {
+        char flush_buf[4096];
+        recv(sock, flush_buf, sizeof(flush_buf), 0);
+    }
+    
+    g_group_chat_id = 0;
+    g_group_name[0] = '\0';
+    g_my_username[0] = '\0';
+    g_chat_sock = -1;
+    
+    printf(C_INFO "\nGroup chat ended. Returning to group menu...\n" C_RESET);
+}
