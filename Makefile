@@ -4,7 +4,7 @@ BUILD=build
 
 COMMON_SRC=common/framing.c common/protocol.c
 SERVER_SRC=server/server.c server/handlers.c server/accounts.c server/sessions.c server/friends.c server/messages.c server/groups.c server/group_messages.c server/logger.c
-CLIENT_SRC=client/client.c
+CLIENT_SRC=client/client_main.c client/client_utils.c client/client_ui.c client/client_auth.c client/client_friends.c client/client_groups.c client/client_pm.c client/client_gm.c
 
 all: $(BUILD) $(BUILD)/server $(BUILD)/client
 

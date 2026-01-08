@@ -65,7 +65,7 @@ int gm_init(void)
         struct dirent *ent;
         while ((ent = readdir(dir)) != NULL) {
             if (strstr(ent->d_name, ".txt")) {
-                char path[256];
+                char path[512];
                 snprintf(path, sizeof(path), "%s/%s", GM_DIR, ent->d_name);
                 
                 FILE *f = fopen(path, "r");

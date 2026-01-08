@@ -62,20 +62,18 @@ make
 ```
 
 ### 5) Test tự động (khuyến nghị)
-Bộ test tích hợp cover đầy đủ tất cả tính năng với **30 test cases**:
+Bộ test tích hợp cover đầy đủ tất cả tính năng với **92 test cases**:
 ```bash
 make clean && make
-python3 tests/itest.py
-# hoặc
-./tests/run.sh
+python3 tests/run_all_tests.py
 ```
 
-**Test coverage (30 tests):**
-- **Base (6 tests)**: framing, accounts, sessions, concurrency
-- **Friend (8 tests)**: invite/accept/reject/pending/list/delete
-- **Private Message (5 tests)**: PM_SEND, PM_HISTORY, PM_CONVERSATIONS, offline message, real-time push
-- **Group (5 tests)**: GROUP_CREATE, GROUP_ADD, GROUP_REMOVE, GROUP_LEAVE, GROUP_LIST
-- **Group Message (6 tests)**: GM_SEND, GM_HISTORY, real-time push, join/leave notifications, kick handling
+**Test coverage (92 tests):**
+- **Base (18 tests)**: framing, accounts, sessions, concurrency
+- **Friends (18 tests)**: invite/accept/reject/pending/list/delete, online status
+- **Groups (19 tests)**: create, add/remove members, leave, list, permissions
+- **Private Message (18 tests)**: PM_SEND, PM_HISTORY, PM_CONVERSATIONS, offline, real-time push, Unicode
+- **Group Message (19 tests)**: GM_SEND, GM_HISTORY, real-time push, join/leave/kick notifications
 
 ---
 
@@ -101,8 +99,16 @@ ChatProject-IT4062/
 │   ├── messages.c/h            # Private Message (PM) chat 1-1
 │   ├── group_messages.c/h      # Group Message (GM) chat nhóm
 │   └── logger.c/h              # Ghi log hoạt động (data/server.log)
-├── client/
-│   └── client.c                # Menu-based client + Raw send mode
+├── client/                     # Client modular (refactored)
+│   ├── client.h                # Header chung: includes, constants, colors, prototypes
+│   ├── client_main.c           # Entry point, main loop
+│   ├── client_utils.c          # Kết nối, send_line, kv_get, Base64 encode/decode
+│   ├── client_ui.c             # Hiển thị menu
+│   ├── client_auth.c           # Register, Login, Logout, Whoami
+│   ├── client_friends.c        # Friend operations (invite, accept, reject, list, delete)
+│   ├── client_groups.c         # Group menu và operations
+│   ├── client_pm.c             # Private Message chat mode (real-time)
+│   └── client_gm.c             # Group Message chat mode (real-time)
 ├── data/                       # Database files (auto-created)
 │   ├── users.db                # Tài khoản: id|username|salt|hash|email|active
 │   ├── friends.db              # Quan hệ bạn bè
@@ -112,16 +118,13 @@ ChatProject-IT4062/
 │   ├── gm/                     # Tin nhắn nhóm: {group_id}.txt
 │   └── server.log              # Log hoạt động
 └── tests/                      # Integration tests (Python)
-    ├── itest.py                # Base tests (framing, accounts, sessions)
-    ├── itest_addfriend.py      # Friend invite tests
-    ├── itest_listpending_acc_rej.py  # Pending/accept/reject tests
-    ├── itest_friendlist_status.py    # Friend list + online status
-    ├── itest_deletefriend.py   # Unfriend tests
-    ├── itest_disconnect.py     # Disconnect tests
-    ├── itest_groups_members_add.py   # Group + membership tests
-    ├── itest_private_message.py      # PM tests
-    ├── itest_group_message.py        # GM tests
-    └── run.sh                  # Wrapper chạy build + all tests
+    ├── run_all_tests.py        # Main test runner (92 tests)
+    ├── test_base.py            # Base tests (framing, accounts, sessions)
+    ├── test_friends.py         # Friend feature tests
+    ├── test_groups.py          # Group feature tests
+    ├── test_pm.py              # Private message tests
+    ├── test_gm.py              # Group message tests
+    └── test_utils.py           # Test utilities
 ```
 
 ---
@@ -199,8 +202,11 @@ Tất cả message là **1 dòng** kết thúc bằng `\r\n`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                                  CLIENT                                      │
+│                              CLIENT (Modular)                                │
 │  ┌─────────────────────────────────────────────────────────────────────────┐│
+│  │ client_main.c │ client_ui.c │ client_auth.c │ client_friends.c         ││
+│  │ client_groups.c │ client_pm.c │ client_gm.c │ client_utils.c           ││
+│  ├─────────────────────────────────────────────────────────────────────────┤│
 │  │  Menu UI  │  Chat Mode (PM/GM)  │  Receive Thread (PUSH handler)       ││
 │  └─────────────────────────────────────────────────────────────────────────┘│
 │                              │ TCP Socket │                                  │
@@ -278,7 +284,9 @@ Dự án dùng delimiter `\r\n` để tách message theo dòng. Module `common/f
 
 Giới hạn bảo vệ: nếu buffer vượt ~64KB mà chưa gặp `\r\n` thì coi là dòng quá dài và server sẽ ngắt kết nối.
 
-Test framing đã có trong `tests/itest.py` (gửi theo từng byte, nhiều dòng trong một lần gửi, và dòng quá dài).\n---\n
+Test framing đã có trong `tests/test_base.py` (gửi theo từng byte, nhiều dòng trong một lần gửi, và dòng quá dài).
+
+---
 ## Tài khoản (accounts)
 
 ### File DB
@@ -340,6 +348,3 @@ Ví dụ:
 
 ---
 
-## Tác giả
-
-Nhóm 3 - IT4062 - HUST
